@@ -1,0 +1,322 @@
+-- 🌌 REBELDE X DRYX HUB - ULTRA LOW POLY FINAL + SKY (MODDED)
+
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local SENHA_CORRETA = "diegolenda"
+
+-- ===== WATERMARK & FPS COUNTER (NEW) =====
+local infoGui = Instance.new("ScreenGui")
+infoGui.Name = "RebeldeXDryx_Info"
+infoGui.IgnoreGuiInset = true
+infoGui.ResetOnSpawn = false
+infoGui.Parent = player:WaitForChild("PlayerGui")
+
+local container = Instance.new("Frame")
+container.Size = UDim2.new(0, 200, 0, 100)
+container.Position = UDim2.new(1, -210, 0, 50)
+container.BackgroundTransparency = 1
+container.Parent = infoGui
+
+local watermark = Instance.new("TextLabel")
+watermark.Size = UDim2.new(1, 0, 0, 30)
+watermark.Text = "Rebelde X Dryx"
+watermark.Font = Enum.Font.GothamBold
+watermark.TextSize = 22
+watermark.TextColor3 = Color3.fromRGB(60, 120, 255)
+watermark.TextXAlignment = Enum.TextXAlignment.Right
+watermark.BackgroundTransparency = 1
+watermark.Parent = container
+
+local fpsLabel = Instance.new("TextLabel")
+fpsLabel.Size = UDim2.new(1, 0, 0, 20)
+fpsLabel.Position = UDim2.new(0, 0, 0, 30)
+fpsLabel.Text = "FPS: 0"
+fpsLabel.Font = Enum.Font.Gotham
+fpsLabel.TextSize = 16
+fpsLabel.TextColor3 = Color3.new(1, 1, 1)
+fpsLabel.TextXAlignment = Enum.TextXAlignment.Right
+fpsLabel.BackgroundTransparency = 1
+fpsLabel.Parent = container
+
+-- Animação da Watermark e Contador de FPS
+RunService.RenderStepped:Connect(function(dt)
+	local fps = math.floor(1 / dt)
+	fpsLabel.Text = "FPS: " .. fps
+	
+	-- Efeito de Pulsação Simples
+	local pulse = (math.sin(tick() * 3) + 1) / 2
+	watermark.TextColor3 = Color3.fromRGB(60 + (pulse * 40), 120 + (pulse * 40), 255)
+	watermark.TextTransparency = 0.1 + (pulse * 0.3)
+end)
+
+-- ===== BLUR =====
+for _, v in pairs(Lighting:GetChildren()) do
+	if v:IsA("BlurEffect") then v:Destroy() end
+end
+
+local blur = Instance.new("BlurEffect")
+blur.Size = 15
+blur.Enabled = false
+blur.Parent = Lighting
+
+-- ===== GUI =====
+local gui = Instance.new("ScreenGui")
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local function style(obj, radius)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius or 12)
+	corner.Parent = obj
+end
+
+-- ================= LOGIN =================
+local login = Instance.new("Frame")
+login.Size = UDim2.new(0,420,0,240)
+login.Position = UDim2.new(0.5,-210,0.5,-120)
+login.BackgroundColor3 = Color3.fromRGB(18,18,25)
+login.Parent = gui
+style(login,18)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1,0,0,60)
+title.BackgroundTransparency = 1
+title.Text = "REBELDE X DRYX"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 24
+title.TextColor3 = Color3.fromRGB(60,120,255)
+title.Parent = login
+
+local box = Instance.new("TextBox")
+box.Size = UDim2.new(0.8,0,0,45)
+box.Position = UDim2.new(0.1,0,0.4,0)
+box.PlaceholderText = "Digite a senha..."
+box.TextColor3 = Color3.new(1,1,1)
+box.BackgroundColor3 = Color3.fromRGB(30,30,40)
+box.Parent = login
+style(box,10)
+
+local verify = Instance.new("TextButton")
+verify.Size = UDim2.new(0.8,0,0,45)
+verify.Position = UDim2.new(0.1,0,0.68,0)
+verify.Text = "VERIFICAR"
+verify.BackgroundColor3 = Color3.fromRGB(60,120,255)
+verify.TextColor3 = Color3.new(1,1,1)
+verify.Parent = login
+style(verify,10)
+
+-- ================= HUB =================
+local hub = Instance.new("Frame")
+hub.Size = UDim2.new(0,0,0,0)
+hub.Position = UDim2.new(0.5,-300,0.5,-200)
+hub.BackgroundColor3 = Color3.fromRGB(15,15,20)
+hub.Visible = false
+hub.Parent = gui
+style(hub,20)
+
+-- Top Bar
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1,0,0,55)
+topBar.BackgroundColor3 = Color3.fromRGB(22,22,30)
+topBar.Parent = hub
+style(topBar,20)
+
+local accent = Instance.new("Frame")
+accent.Size = UDim2.new(1,0,0,3)
+accent.Position = UDim2.new(0,0,1,-3)
+accent.BackgroundColor3 = Color3.fromRGB(60,120,255)
+accent.BorderSizePixel = 0
+accent.Parent = topBar
+
+local hubTitle = Instance.new("TextLabel")
+hubTitle.Size = UDim2.new(1,-60,1,0)
+hubTitle.Position = UDim2.new(0,20,0,0)
+hubTitle.BackgroundTransparency = 1
+hubTitle.Text = "Ultra Low Poly Hub"
+hubTitle.Font = Enum.Font.GothamBold
+hubTitle.TextSize = 20
+hubTitle.TextColor3 = Color3.fromRGB(60,120,255)
+hubTitle.TextXAlignment = Enum.TextXAlignment.Left
+hubTitle.Parent = topBar
+
+-- Close
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0,35,0,35)
+closeBtn.Position = UDim2.new(1,-45,0.5,-17)
+closeBtn.Text = "✕"
+closeBtn.TextSize = 18
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BackgroundColor3 = Color3.fromRGB(255,70,70)
+closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.Parent = topBar
+style(closeBtn,50)
+
+-- Content Area
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1,-40,1,-90)
+content.Position = UDim2.new(0,20,0,70)
+content.BackgroundTransparency = 1
+content.Parent = hub
+
+-- ================= FUNÇÕES =================
+local function isCharacter(model)
+	return model:FindFirstChildOfClass("Humanoid") ~= nil
+end
+
+local activated = false
+local function optimizeUltraLowPoly()
+	-- Lighting
+	Lighting.GlobalShadows = false
+	Lighting.FogEnd = 1e9
+	Lighting.Brightness = 2
+
+	-- Terrain
+	local terrain = Workspace:FindFirstChildOfClass("Terrain")
+	if terrain then
+		terrain.WaterWaveSize = 0
+		terrain.WaterWaveSpeed = 0
+		terrain.WaterReflectance = 0
+		terrain.WaterTransparency = 1
+	end
+
+	-- Remove árvores, pedras e props soltos, mantém chão, paredes, NPCs e players
+	for _, obj in pairs(Workspace:GetDescendants()) do
+		if obj:IsA("Terrain") then continue end
+		local model = obj:FindFirstAncestorOfClass("Model")
+		if model and isCharacter(model) then
+			-- **Ultra Low Poly NPC/Player corrigido**
+			for _, part in pairs(model:GetDescendants()) do
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+					part.Material = Enum.Material.SmoothPlastic
+					part.Reflectance = 0
+					part.CastShadow = false
+					part.Transparency = 0
+				end
+			end
+			continue
+		end
+		-- Mantém partes fixas do chão e paredes
+		if obj:IsA("BasePart") and obj.Anchored and obj.CanCollide then
+			obj.Material = Enum.Material.SmoothPlastic
+			obj.Reflectance = 0
+			obj.CastShadow = false
+			obj.Transparency = 0
+			continue
+		end
+		-- Remove props e árvores
+		if obj.Name:lower():match("tree") or obj.Name:lower():match("rock") then
+			obj:Destroy()
+		elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Smoke") or obj:IsA("Fire") or obj:IsA("Sparkles") then
+			obj.Enabled = false
+		elseif obj:IsA("BasePart") then
+			obj:Destroy()
+		end
+	end
+end
+
+-- ================= SKY (MODDED ID) =================
+local skies = {
+	{ Name = "Custom Sky (Main)", TextureId = "rbxassetid://159454299" },
+	{ Name = "Sunny Sky", TextureId = "rbxassetid://140664609" },
+	{ Name = "Night Sky", TextureId = "rbxassetid://395375914" },
+}
+
+local function applySky(skyData)
+	for _, oldSky in pairs(Lighting:GetChildren()) do
+		if oldSky:IsA("Sky") then oldSky:Destroy() end
+	end
+	local sky = Instance.new("Sky")
+	sky.Name = "CustomSky"
+	sky.SkyboxBk = skyData.TextureId
+	sky.SkyboxDn = skyData.TextureId
+	sky.SkyboxFt = skyData.TextureId
+	sky.SkyboxLf = skyData.TextureId
+	sky.SkyboxRt = skyData.TextureId
+	sky.SkyboxUp = skyData.TextureId
+	sky.Parent = Lighting
+end
+
+-- Aplicar o céu solicitado ao carregar
+applySky(skies[1])
+
+-- Full Ultra Low Poly Button
+local perfButton = Instance.new("TextButton")
+perfButton.Size = UDim2.new(0.8,0,0,45)
+perfButton.Position = UDim2.new(0.1,0,0,10)
+perfButton.Text = "ATIVAR ULTRA LOW POLY"
+perfButton.Font = Enum.Font.GothamBold
+perfButton.TextSize = 16
+perfButton.BackgroundColor3 = Color3.fromRGB(40,40,55)
+perfButton.TextColor3 = Color3.new(1,1,1)
+perfButton.Parent = content
+style(perfButton,12)
+
+perfButton.MouseButton1Click:Connect(function()
+	if not activated then
+		activated = true
+		perfButton.Text = "ULTRA LOW POLY ATIVADO ✓"
+		perfButton.BackgroundColor3 = Color3.fromRGB(50,150,50)
+		optimizeUltraLowPoly()
+		applySky(skies[1])
+	end
+end)
+
+-- Cria botões de sky
+for i, skyData in ipairs(skies) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0.8,0,0,40)
+	btn.Position = UDim2.new(0.1,0,0,70+(i-1)*50)
+	btn.Text = skyData.Name
+	btn.Font = Enum.Font.GothamBold
+	btn.TextSize = 14
+	btn.BackgroundColor3 = Color3.fromRGB(50,50,70)
+	btn.TextColor3 = Color3.new(1,1,1)
+	btn.Parent = content
+	style(btn,10)
+	btn.MouseButton1Click:Connect(function()
+		applySky(skyData)
+	end)
+end
+
+-- ================= LOGIN =================
+verify.MouseButton1Click:Connect(function()
+	if box.Text == SENHA_CORRETA then
+		login.Visible = false
+		blur.Enabled = true
+		hub.Visible = true
+		hub:TweenSize(UDim2.new(0,600,0,400),"Out","Quad",0.4,true)
+	else
+		verify.Text = "SENHA ERRADA"
+		task.wait(1)
+		verify.Text = "VERIFICAR"
+	end
+end)
+
+-- ================= MINIMIZAR =================
+local openButton = Instance.new("TextButton")
+openButton.Size = UDim2.new(0,160,0,45)
+openButton.Position = UDim2.new(0.02,0,0.8,0)
+openButton.Text = "ABRIR HUB"
+openButton.BackgroundColor3 = Color3.fromRGB(60,120,255)
+openButton.TextColor3 = Color3.new(1,1,1)
+openButton.Visible = false
+openButton.Parent = gui
+style(openButton,25)
+
+closeBtn.MouseButton1Click:Connect(function()
+	hub.Visible = false
+	blur.Enabled = false
+	openButton.Visible = true
+end)
+
+openButton.MouseButton1Click:Connect(function()
+	hub.Visible = true
+	blur.Enabled = true
+	openButton.Visible = false
+end)
