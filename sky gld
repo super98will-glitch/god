@@ -1,0 +1,212 @@
+-- 🌌 REBELDE X DRYX HUB - ULTRA LOW POLY FINAL + SKY + FPS UNLOCK
+
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local SENHA_CORRETA = "diegolenda"
+
+-- ================= FPS UNLOCK =================
+settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+
+RunService.RenderStepped:Connect(function()
+    setfpscap(0)
+end)
+
+-- ================= LIGHTING FPS BOOST =================
+Lighting.GlobalShadows = false
+Lighting.Brightness = 2
+Lighting.FogEnd = 1000000
+Lighting.EnvironmentDiffuseScale = 0
+Lighting.EnvironmentSpecularScale = 0
+
+-- ===== BLUR =====
+for _, v in pairs(Lighting:GetChildren()) do
+	if v:IsA("BlurEffect") then v:Destroy() end
+end
+
+local blur = Instance.new("BlurEffect")
+blur.Size = 15
+blur.Enabled = false
+blur.Parent = Lighting
+
+-- ================= SKY GALAXY =================
+local function applyGalaxySky()
+
+	for _, v in pairs(Lighting:GetChildren()) do
+		if v:IsA("Sky") then
+			v:Destroy()
+		end
+	end
+
+	local sky = Instance.new("Sky")
+	sky.Name = "GalaxySky"
+
+	sky.SkyboxBk = "rbxassetid://159454299"
+	sky.SkyboxDn = "rbxassetid://159454296"
+	sky.SkyboxFt = "rbxassetid://159454293"
+	sky.SkyboxLf = "rbxassetid://159454286"
+	sky.SkyboxRt = "rbxassetid://159454300"
+	sky.SkyboxUp = "rbxassetid://159454288"
+
+	sky.Parent = Lighting
+end
+
+applyGalaxySky()
+
+-- ===== GUI =====
+local gui = Instance.new("ScreenGui")
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local function style(obj, radius)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, radius or 12)
+	corner.Parent = obj
+end
+
+-- ================= LOGIN =================
+local login = Instance.new("Frame")
+login.Size = UDim2.new(0,420,0,240)
+login.Position = UDim2.new(0.5,-210,0.5,-120)
+login.BackgroundColor3 = Color3.fromRGB(18,18,25)
+login.Parent = gui
+style(login,18)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1,0,0,60)
+title.BackgroundTransparency = 1
+title.Text = "REBELDE X DRYX"
+title.Font = Enum.Font.GothamBold
+title.TextSize = 24
+title.TextColor3 = Color3.fromRGB(60,120,255)
+title.Parent = login
+
+local box = Instance.new("TextBox")
+box.Size = UDim2.new(0.8,0,0,45)
+box.Position = UDim2.new(0.1,0,0.4,0)
+box.PlaceholderText = "Digite a senha..."
+box.TextColor3 = Color3.new(1,1,1)
+box.BackgroundColor3 = Color3.fromRGB(30,30,40)
+box.Parent = login
+style(box,10)
+
+local verify = Instance.new("TextButton")
+verify.Size = UDim2.new(0.8,0,0,45)
+verify.Position = UDim2.new(0.1,0,0.68,0)
+verify.Text = "VERIFICAR"
+verify.BackgroundColor3 = Color3.fromRGB(60,120,255)
+verify.TextColor3 = Color3.new(1,1,1)
+verify.Parent = login
+style(verify,10)
+
+-- ================= HUB =================
+local hub = Instance.new("Frame")
+hub.Size = UDim2.new(0,0,0,0)
+hub.Position = UDim2.new(0.5,-300,0.5,-200)
+hub.BackgroundColor3 = Color3.fromRGB(15,15,20)
+hub.Visible = false
+hub.Parent = gui
+style(hub,20)
+
+-- Top Bar
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1,0,0,55)
+topBar.BackgroundColor3 = Color3.fromRGB(22,22,30)
+topBar.Parent = hub
+style(topBar,20)
+
+local accent = Instance.new("Frame")
+accent.Size = UDim2.new(1,0,0,3)
+accent.Position = UDim2.new(0,0,1,-3)
+accent.BackgroundColor3 = Color3.fromRGB(60,120,255)
+accent.BorderSizePixel = 0
+accent.Parent = topBar
+
+local hubTitle = Instance.new("TextLabel")
+hubTitle.Size = UDim2.new(1,-60,1,0)
+hubTitle.Position = UDim2.new(0,20,0,0)
+hubTitle.BackgroundTransparency = 1
+hubTitle.Text = "Ultra Low Poly Hub"
+hubTitle.Font = Enum.Font.GothamBold
+hubTitle.TextSize = 20
+hubTitle.TextColor3 = Color3.fromRGB(60,120,255)
+hubTitle.TextXAlignment = Enum.TextXAlignment.Left
+hubTitle.Parent = topBar
+
+-- Close
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0,35,0,35)
+closeBtn.Position = UDim2.new(1,-45,0.5,-17)
+closeBtn.Text = "✕"
+closeBtn.TextSize = 18
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BackgroundColor3 = Color3.fromRGB(255,70,70)
+closeBtn.TextColor3 = Color3.new(1,1,1)
+closeBtn.Parent = topBar
+style(closeBtn,50)
+
+-- Content Area
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1,-40,1,-90)
+content.Position = UDim2.new(0,20,0,70)
+content.BackgroundTransparency = 1
+content.Parent = hub
+
+-- ================= BOTÃO ULTRA LOW =================
+local perfButton = Instance.new("TextButton")
+perfButton.Size = UDim2.new(0.8,0,0,45)
+perfButton.Position = UDim2.new(0.1,0,0,10)
+perfButton.Text = "ATIVAR ULTRA LOW POLY"
+perfButton.Font = Enum.Font.GothamBold
+perfButton.TextSize = 16
+perfButton.BackgroundColor3 = Color3.fromRGB(40,40,55)
+perfButton.TextColor3 = Color3.new(1,1,1)
+perfButton.Parent = content
+style(perfButton,12)
+
+perfButton.MouseButton1Click:Connect(function()
+	perfButton.Text = "ULTRA LOW POLY ATIVADO ✓"
+	perfButton.BackgroundColor3 = Color3.fromRGB(50,150,50)
+end)
+
+-- ================= LOGIN =================
+verify.MouseButton1Click:Connect(function()
+	if box.Text == SENHA_CORRETA then
+		login.Visible = false
+		blur.Enabled = true
+		hub.Visible = true
+		hub:TweenSize(UDim2.new(0,600,0,400),"Out","Quad",0.4,true)
+	else
+		verify.Text = "SENHA ERRADA"
+		task.wait(1)
+		verify.Text = "VERIFICAR"
+	end
+end)
+
+-- ================= MINIMIZAR =================
+local openButton = Instance.new("TextButton")
+openButton.Size = UDim2.new(0,160,0,45)
+openButton.Position = UDim2.new(0.02,0,0.8,0)
+openButton.Text = "ABRIR HUB"
+openButton.BackgroundColor3 = Color3.fromRGB(60,120,255)
+openButton.TextColor3 = Color3.new(1,1,1)
+openButton.Visible = false
+openButton.Parent = gui
+style(openButton,25)
+
+closeBtn.MouseButton1Click:Connect(function()
+	hub.Visible = false
+	blur.Enabled = false
+	openButton.Visible = true
+end)
+
+openButton.MouseButton1Click:Connect(function()
+	hub.Visible = true
+	blur.Enabled = true
+	openButton.Visible = false
+end)
