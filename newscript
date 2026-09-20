@@ -3222,9 +3222,12 @@ end)
 print("⚡ GOD'S PLAN HUB V7.0 carregado — pressione TAB 2x para abrir/fechar")
 
 -- ================================================================
--- VISUAL POLISH — CONSOLIDADO
--- Junta: Border Polish + Dropdown ZIndex + Borda Assimétrica + Coroa
--- Nenhuma função, callback ou feature é alterada.
+-- VISUAL POLISH + THEME MANAGER + ABA THEMES + ABA SKIN
+-- Bloco único. Não substitui nada além do "Visual Polish" antigo.
+-- ================================================================
+
+-- ================================================================
+-- 1) VISUAL POLISH — CONSOLIDADO (corrigido)
 -- ================================================================
 task.spawn(function()
     task.wait(0.2)
@@ -3234,62 +3237,40 @@ task.spawn(function()
 
     local gui = (_G.__L1GHT_UI and _G.__L1GHT_UI.gui)
              or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
-    if not gui then
-        warn("[Visual Polish] UI não encontrada.")
-        return
-    end
+    if not gui then warn("[Visual Polish] UI não encontrada.") return end
 
     local window = gui:FindFirstChild("Window")
     if not window then return end
 
-    ----------------------------------------------------------------
-    -- [1] DROPDOWNS ACIMA DE TUDO
-    -- Troca Sibling → Global. Cada ZIndex passa a ser comparado no
-    -- ScreenGui inteiro (CONTROL 30 < DROPDOWN 100 < NOTIF 200).
-    -- Nenhum ZIndex numérico é alterado.
-    ----------------------------------------------------------------
+    -- [1] Dropdowns acima de tudo
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 
-    ----------------------------------------------------------------
-    -- [2] CANTOS INTERNOS (AccentBar / Header / Sidebar)
-    ----------------------------------------------------------------
+    -- [2] Cantos internos (AccentBar / Header / Sidebar)
     local wc = window:FindFirstChildOfClass("UICorner")
     local wR = wc and wc.CornerRadius.Offset or 12
 
-    local accent = window:FindFirstChild("AccentBar")
-                or window:FindFirstChild("accentBar")
+    local accent = window:FindFirstChild("AccentBar") or window:FindFirstChild("accentBar")
     if accent and accent:IsA("GuiObject") then
         local ac = accent:FindFirstChildOfClass("UICorner")
-        if not ac then
-            ac = Instance.new("UICorner")
-            ac.Parent = accent
-        end
+        if not ac then ac = Instance.new("UICorner") ac.Parent = accent end
         ac.CornerRadius = UDim.new(0, math.max(0, wR - 1))
     end
 
     local header = window:FindFirstChild("Header")
     if header and header:IsA("GuiObject") then
         local hc = header:FindFirstChildOfClass("UICorner")
-        if not hc then
-            hc = Instance.new("UICorner")
-            hc.Parent = header
-        end
+        if not hc then hc = Instance.new("UICorner") hc.Parent = header end
         hc.CornerRadius = UDim.new(0, math.max(0, wR - 2))
     end
 
     local sidebar = window:FindFirstChild("Sidebar")
     if sidebar and sidebar:IsA("GuiObject") then
         local sc = sidebar:FindFirstChildOfClass("UICorner")
-        if not sc then
-            sc = Instance.new("UICorner")
-            sc.Parent = sidebar
-        end
+        if not sc then sc = Instance.new("UICorner") sc.Parent = sidebar end
         sc.CornerRadius = UDim.new(0, math.max(0, wR - 2))
     end
 
-    ----------------------------------------------------------------
-    -- [3] UISTROKE: remove duplicados, normaliza espessura/alinhamento
-    ----------------------------------------------------------------
+    -- [3] UIStroke: remove duplicados, normaliza
     for _, d in ipairs(gui:GetDescendants()) do
         if d:IsA("UIStroke") then
             local parent = d.Parent
@@ -3309,9 +3290,7 @@ task.spawn(function()
         end
     end
 
-    ----------------------------------------------------------------
-    -- [4] UICORNER: raio não pode passar da metade do frame
-    ----------------------------------------------------------------
+    -- [4] UICorner: raio ≤ metade do frame
     for _, d in ipairs(gui:GetDescendants()) do
         if d:IsA("UICorner") and d.Parent and d.Parent:IsA("GuiObject") then
             local p = d.Parent
@@ -3323,13 +3302,7 @@ task.spawn(function()
         end
     end
 
-    ----------------------------------------------------------------
-    -- [5] BORDA ASSIMÉTRICA: topo quadrado, base arredondada
-    -- Window.ClipsDescendants = false permite que AccentBar e Header
-    -- apareçam como retângulos (cantos retos no topo). A base fica
-    -- arredondada por conta do UICorner da própria Window.
-    ----------------------------------------------------------------
-    window.ClipsDescendants = false
+    -- [5] Borda assimétrica: topo quadrado, base arredondada
     if not wc then
         wc = Instance.new("UICorner")
         wc.Parent = window
@@ -3338,8 +3311,6 @@ task.spawn(function()
         wc.CornerRadius = UDim.new(0, 12)
     end
 
-    -- tapa o canto arredondado do topo esquerdo/direito com um quadrado
-    -- de cor da Window (garante visual 100% quadrado no topo)
     for _, n in ipairs({"__SquareTL", "__SquareTR"}) do
         local old = window:FindFirstChild(n)
         if old then old:Destroy() end
@@ -3355,15 +3326,13 @@ task.spawn(function()
         f.BackgroundColor3 = window.BackgroundColor3
         f.BackgroundTransparency = window.BackgroundTransparency
         f.BorderSizePixel = 0
-        f.ZIndex = window.ZIndex
+        f.ZIndex = window.ZIndex + 1
         f.Parent = window
     end
     makeCap("__SquareTL", UDim2.fromOffset(-1, -1))
     makeCap("__SquareTR", UDim2.new(1, -capSize + 1, 0, -1))
 
-    ----------------------------------------------------------------
-    -- [6] COROA ANTES DE "GOD'S PLAN"
-    ----------------------------------------------------------------
+    -- [6] Coroa antes de "GOD'S PLAN"
     if header then
         for _, c in ipairs(header:GetChildren()) do
             if c:IsA("TextLabel") and c.Text:find("GOD'S PLAN", 1, true) then
@@ -3375,5 +3344,825 @@ task.spawn(function()
         end
     end
 
-    print("[Visual Polish] Patch consolidado aplicado.")
+    print("[Visual Polish] aplicado.")
 end)
+
+
+-- ================================================================
+-- 2) THEME MANAGER — sistema base
+-- ================================================================
+do
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+
+    local ThemeManager = {
+        Current = "Default",
+        Themes = {
+            ["Default"] = {
+                Background = Color3.fromRGB(6, 6, 10),
+                Surface = Color3.fromRGB(12, 12, 18),
+                SurfaceSecondary = Color3.fromRGB(18, 18, 26),
+                Card = Color3.fromRGB(14, 14, 22),
+                CardHover = Color3.fromRGB(20, 20, 30),
+                Accent = Color3.fromRGB(120, 130, 155),
+                AccentDim = Color3.fromRGB(60, 65, 85),
+                Text = Color3.fromRGB(240, 240, 250),
+                TextSecondary = Color3.fromRGB(160, 160, 175),
+                TextMuted = Color3.fromRGB(110, 110, 125),
+                Border = Color3.fromRGB(30, 30, 42),
+                BorderLight = Color3.fromRGB(48, 48, 62),
+                BackgroundImage = "",
+                BackgroundImageTransparency = 1,
+            },
+            ["ZeroTwo"] = {
+                Background = Color3.fromRGB(20, 8, 20),
+                Surface = Color3.fromRGB(35, 15, 35),
+                SurfaceSecondary = Color3.fromRGB(45, 20, 45),
+                Card = Color3.fromRGB(40, 18, 40),
+                CardHover = Color3.fromRGB(55, 25, 55),
+                Accent = Color3.fromRGB(255, 100, 150),
+                AccentDim = Color3.fromRGB(180, 60, 100),
+                Text = Color3.fromRGB(255, 230, 240),
+                TextSecondary = Color3.fromRGB(220, 160, 180),
+                TextMuted = Color3.fromRGB(150, 100, 120),
+                Border = Color3.fromRGB(80, 30, 60),
+                BorderLight = Color3.fromRGB(120, 50, 90),
+                BackgroundImage = "",
+                BackgroundImageTransparency = 1,
+            },
+        }
+    }
+
+    local function recolorTree(obj, t)
+        if not obj or not obj.Parent then return end
+
+        if obj:IsA("Frame") or obj:IsA("TextButton") then
+            if obj.Name == "Window" then
+                obj.BackgroundColor3 = t.Surface
+            elseif obj.Name == "Header" then
+                obj.BackgroundColor3 = t.SurfaceSecondary
+            elseif obj.Name == "Sidebar" then
+                obj.BackgroundColor3 = t.SurfaceSecondary
+            elseif obj.Name == "__SquareTL" or obj.Name == "__SquareTR" then
+                obj.BackgroundColor3 = t.Surface
+                obj.BackgroundTransparency = obj.Parent and obj.Parent.BackgroundTransparency or 0
+            elseif obj:FindFirstChildOfClass("UIStroke") then
+                if obj:IsA("TextButton") and obj.Text ~= "" and obj.Text ~= "✕" then
+                    obj.BackgroundColor3 = t.AccentDim
+                else
+                    obj.BackgroundColor3 = t.Card
+                end
+            end
+
+            local stroke = obj:FindFirstChildOfClass("UIStroke")
+            if stroke then stroke.Color = t.Border end
+        end
+
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            if obj.TextSize >= 13 then
+                obj.TextColor3 = t.Text
+            elseif obj.TextSize >= 11 then
+                obj.TextColor3 = t.TextSecondary
+            else
+                obj.TextColor3 = t.TextMuted
+            end
+        end
+
+        for _, c in ipairs(obj:GetChildren()) do
+            recolorTree(c, t)
+        end
+    end
+
+    function ThemeManager:Apply(name)
+        local t = self.Themes[name]
+        if not t then return end
+        self.Current = name
+
+        local UIRef = _G.__L1GHT_UI
+        if UIRef and UIRef.Theme then
+            for k, v in pairs(t) do UIRef.Theme[k] = v end
+        end
+
+        local gui = (UIRef and UIRef.gui)
+                 or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
+        if not gui then return end
+
+        local window = gui:FindFirstChild("Window")
+        if not window then return end
+
+        recolorTree(window, t)
+
+        for _, nm in ipairs({"__SquareTL", "__SquareTR"}) do
+            local cap = window:FindFirstChild(nm)
+            if cap then
+                cap.BackgroundColor3 = t.Surface
+                cap.BackgroundTransparency = window.BackgroundTransparency
+            end
+        end
+
+        local bg = window:FindFirstChild("__ThemeBackground")
+        if not bg then
+            bg = Instance.new("ImageLabel")
+            bg.Name = "__ThemeBackground"
+            bg.Size = UDim2.new(1, 0, 1, 0)
+            bg.Position = UDim2.fromOffset(0, 0)
+            bg.BackgroundTransparency = 1
+            bg.BorderSizePixel = 0
+            bg.ZIndex = window.ZIndex
+            bg.Active = false
+            bg.Selectable = false
+            bg.Parent = window
+        end
+        if t.BackgroundImage and t.BackgroundImage ~= "" then
+            bg.Image = t.BackgroundImage
+            bg.ImageTransparency = t.BackgroundImageTransparency or 0.5
+        else
+            bg.Image = ""
+            bg.ImageTransparency = 1
+        end
+    end
+
+    _G.ThemeManager = ThemeManager
+    print("[ThemeManager] carregado.")
+end
+
+
+-- ================================================================
+-- 3) ABA THEMES
+-- ================================================================
+do
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local TweenService = game:GetService("TweenService")
+
+    task.spawn(function()
+        task.wait(0.4)
+
+        local gui = (_G.__L1GHT_UI and _G.__L1GHT_UI.gui)
+                 or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
+        if not gui then return end
+        local window = gui:FindFirstChild("Window")
+        if not window then return end
+        local sidebar = window:FindFirstChild("Sidebar")
+        local content = window:FindFirstChild("Content")
+        if not sidebar or not content then return end
+
+        if content:FindFirstChild("__ThemesPage") then return end
+
+        local UIRef = _G.__L1GHT_UI
+        local ThemeRef = UIRef and UIRef.Theme or {
+            Card = Color3.fromRGB(14,14,22),
+            CardHover = Color3.fromRGB(20,20,30),
+            Accent = Color3.fromRGB(120,130,155),
+            AccentDim = Color3.fromRGB(60,65,85),
+            Text = Color3.fromRGB(240,240,250),
+            TextSecondary = Color3.fromRGB(160,160,175),
+            TextMuted = Color3.fromRGB(110,110,125),
+            Border = Color3.fromRGB(30,30,42),
+            SurfaceSecondary = Color3.fromRGB(18,18,26),
+        }
+
+        local btn = Instance.new("TextButton")
+        btn.Name = "__ThemesBtn"
+        btn.Size = UDim2.new(1, 0, 0, 28)
+        btn.BackgroundColor3 = ThemeRef.Card
+        btn.BackgroundTransparency = 0.6
+        btn.BorderSizePixel = 0
+        btn.Text = ""
+        btn.AutoButtonColor = false
+        btn.ZIndex = 21
+        btn.Parent = sidebar
+        local bCorner = Instance.new("UICorner")
+        bCorner.CornerRadius = UDim.new(0, 6)
+        bCorner.Parent = btn
+
+        local indicator = Instance.new("Frame")
+        indicator.Size = UDim2.fromOffset(2, 12)
+        indicator.Position = UDim2.new(0, 4, 0.5, -6)
+        indicator.BackgroundColor3 = ThemeRef.Accent
+        indicator.BorderSizePixel = 0
+        indicator.Visible = false
+        indicator.Name = "Indicator"
+        indicator.ZIndex = 22
+        indicator.Parent = btn
+        local iCorner = Instance.new("UICorner")
+        iCorner.CornerRadius = UDim.new(1, 0)
+        iCorner.Parent = indicator
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -18, 1, 0)
+        label.Position = UDim2.fromOffset(14, 0)
+        label.BackgroundTransparency = 1
+        label.Text = "🎨 THEMES"
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 10
+        label.TextColor3 = ThemeRef.TextSecondary
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.ZIndex = 22
+        label.Parent = btn
+
+        local page = Instance.new("ScrollingFrame")
+        page.Name = "__ThemesPage"
+        page.Size = UDim2.new(1, 0, 1, 0)
+        page.BackgroundTransparency = 1
+        page.BorderSizePixel = 0
+        page.ScrollBarThickness = 2
+        page.ScrollBarImageColor3 = ThemeRef.Border
+        page.ScrollingDirection = Enum.ScrollingDirection.Y
+        page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        page.CanvasSize = UDim2.new(0, 0, 0, 0)
+        page.Visible = false
+        page.ZIndex = 21
+        page.Parent = content
+
+        local pLayout = Instance.new("UIListLayout")
+        pLayout.Padding = UDim.new(0, 6)
+        pLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        pLayout.Parent = page
+
+        local pPad = Instance.new("UIPadding")
+        pPad.PaddingTop = UDim.new(0, 8)
+        pPad.PaddingBottom = UDim.new(0, 8)
+        pPad.PaddingLeft = UDim.new(0, 10)
+        pPad.PaddingRight = UDim.new(0, 10)
+        pPad.Parent = page
+
+        local function hideWhenOtherShows()
+            for _, c in ipairs(content:GetChildren()) do
+                if c ~= page and c:IsA("ScrollingFrame") and c.Visible then
+                    page.Visible = false
+                    indicator.Visible = false
+                    btn.BackgroundTransparency = 0.6
+                    btn.BackgroundColor3 = ThemeRef.Card
+                    label.TextColor3 = ThemeRef.TextSecondary
+                    return
+                end
+            end
+        end
+        for _, c in ipairs(content:GetChildren()) do
+            if c:IsA("ScrollingFrame") and c ~= page then
+                c:GetPropertyChangedSignal("Visible"):Connect(hideWhenOtherShows)
+            end
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            for _, c in ipairs(content:GetChildren()) do
+                if c:IsA("ScrollingFrame") and c ~= page then
+                    c.Visible = false
+                end
+            end
+            page.Visible = true
+            indicator.Visible = true
+            btn.BackgroundTransparency = 0.3
+            btn.BackgroundColor3 = ThemeRef.AccentDim
+            label.TextColor3 = ThemeRef.Text
+        end)
+        btn.MouseEnter:Connect(function()
+            if page.Visible then return end
+            TweenService:Create(btn, TweenInfo.new(0.12), {
+                BackgroundTransparency = 0.4, BackgroundColor3 = ThemeRef.CardHover,
+            }):Play()
+        end)
+        btn.MouseLeave:Connect(function()
+            if page.Visible then return end
+            TweenService:Create(btn, TweenInfo.new(0.12), {
+                BackgroundTransparency = 0.6, BackgroundColor3 = ThemeRef.Card,
+            }):Play()
+        end)
+
+        local function mkSection(text)
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(1, 0, 0, 22)
+            f.BackgroundTransparency = 1
+            f.ZIndex = 22
+            f.Parent = page
+            local line = Instance.new("Frame")
+            line.Size = UDim2.fromOffset(2, 16)
+            line.Position = UDim2.fromOffset(0, 3)
+            line.BackgroundColor3 = ThemeRef.Accent
+            line.BorderSizePixel = 0
+            line.ZIndex = 23
+            line.Parent = f
+            local c = Instance.new("UICorner")
+            c.CornerRadius = UDim.new(1, 0)
+            c.Parent = line
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(1, -12, 1, 0)
+            l.Position = UDim2.fromOffset(10, 0)
+            l.BackgroundTransparency = 1
+            l.Text = text
+            l.Font = Enum.Font.GothamBold
+            l.TextSize = 11
+            l.TextColor3 = ThemeRef.Accent
+            l.TextXAlignment = Enum.TextXAlignment.Left
+            l.ZIndex = 23
+            l.Parent = f
+        end
+
+        local function mkButton(text, cb)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 30)
+            b.BackgroundColor3 = ThemeRef.AccentDim
+            b.BorderSizePixel = 0
+            b.Text = text
+            b.TextColor3 = ThemeRef.Text
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 11
+            b.AutoButtonColor = false
+            b.ZIndex = 22
+            b.Parent = page
+            local bc = Instance.new("UICorner")
+            bc.CornerRadius = UDim.new(0, 6)
+            bc.Parent = b
+            local bs = Instance.new("UIStroke")
+            bs.Color = ThemeRef.Border
+            bs.Thickness = 1
+            bs.Parent = b
+            b.MouseButton1Click:Connect(function() pcall(cb) end)
+            b.MouseEnter:Connect(function()
+                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.Accent}):Play()
+            end)
+            b.MouseLeave:Connect(function()
+                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.AccentDim}):Play()
+            end)
+        end
+
+        local function mkLabel(text)
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(1, 0, 0, 20)
+            l.BackgroundTransparency = 1
+            l.Text = text
+            l.Font = Enum.Font.GothamMedium
+            l.TextSize = 10
+            l.TextColor3 = ThemeRef.TextMuted
+            l.TextXAlignment = Enum.TextXAlignment.Left
+            l.ZIndex = 22
+            l.Parent = page
+        end
+
+        local function mkDropdown(text, values, defaultIdx, cb)
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(1, 0, 0, 34)
+            f.BackgroundColor3 = ThemeRef.Card
+            f.BackgroundTransparency = 0.15
+            f.BorderSizePixel = 0
+            f.ZIndex = 22
+            f.Parent = page
+            local fc = Instance.new("UICorner")
+            fc.CornerRadius = UDim.new(0, 6)
+            fc.Parent = f
+            local fs = Instance.new("UIStroke")
+            fs.Color = ThemeRef.Border
+            fs.Thickness = 1
+            fs.Parent = f
+
+            local currentIdx = defaultIdx or 1
+            local open = false
+
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, -16, 1, -8)
+            b.Position = UDim2.fromOffset(8, 4)
+            b.BackgroundColor3 = ThemeRef.SurfaceSecondary
+            b.BorderSizePixel = 0
+            b.Text = text .. ": " .. tostring(values[currentIdx])
+            b.TextColor3 = ThemeRef.Text
+            b.Font = Enum.Font.GothamMedium
+            b.TextSize = 11
+            b.AutoButtonColor = false
+            b.TextXAlignment = Enum.TextXAlignment.Left
+            b.ZIndex = 23
+            b.Parent = f
+            local bc = Instance.new("UICorner")
+            bc.CornerRadius = UDim.new(0, 6)
+            bc.Parent = b
+
+            local list = Instance.new("ScrollingFrame")
+            list.Size = UDim2.new(1, 0, 0, math.min(150, #values * 26 + 8))
+            list.Position = UDim2.new(0, 0, 1, 4)
+            list.BackgroundColor3 = ThemeRef.SurfaceSecondary
+            list.BorderSizePixel = 0
+            list.Visible = false
+            list.ZIndex = 100
+            list.ClipsDescendants = true
+            list.ScrollBarThickness = 2
+            list.Parent = f
+            local lc = Instance.new("UICorner")
+            lc.CornerRadius = UDim.new(0, 6)
+            lc.Parent = list
+            local ls = Instance.new("UIStroke")
+            ls.Color = ThemeRef.Border
+            ls.Thickness = 1
+            ls.Parent = list
+
+            local lList = Instance.new("UIListLayout")
+            lList.Padding = UDim.new(0, 2)
+            lList.Parent = list
+            local lPad = Instance.new("UIPadding")
+            lPad.PaddingTop = UDim.new(0, 4)
+            lPad.PaddingBottom = UDim.new(0, 4)
+            lPad.PaddingLeft = UDim.new(0, 4)
+            lPad.PaddingRight = UDim.new(0, 4)
+            lPad.Parent = list
+
+            local function rebuild()
+                for _, c in ipairs(list:GetChildren()) do
+                    if c:IsA("TextButton") then c:Destroy() end
+                end
+                for i, v in ipairs(values) do
+                    local item = Instance.new("TextButton")
+                    item.Size = UDim2.new(1, 0, 0, 22)
+                    item.BackgroundColor3 = (i == currentIdx) and ThemeRef.AccentDim or ThemeRef.Card
+                    item.BorderSizePixel = 0
+                    item.Text = "  " .. tostring(v)
+                    item.TextColor3 = (i == currentIdx) and ThemeRef.Text or ThemeRef.TextSecondary
+                    item.Font = Enum.Font.GothamMedium
+                    item.TextSize = 11
+                    item.TextXAlignment = Enum.TextXAlignment.Left
+                    item.AutoButtonColor = false
+                    item.ZIndex = 101
+                    item.LayoutOrder = i
+                    item.Parent = list
+                    local ic = Instance.new("UICorner")
+                    ic.CornerRadius = UDim.new(0, 6)
+                    ic.Parent = item
+
+                    item.MouseButton1Click:Connect(function()
+                        currentIdx = i
+                        b.Text = text .. ": " .. tostring(values[i])
+                        open = false
+                        list.Visible = false
+                        pcall(cb, values[i])
+                    end)
+                    item.MouseEnter:Connect(function() item.BackgroundColor3 = ThemeRef.CardHover end)
+                    item.MouseLeave:Connect(function()
+                        item.BackgroundColor3 = (i == currentIdx) and ThemeRef.AccentDim or ThemeRef.Card
+                    end)
+                end
+                list.CanvasSize = UDim2.new(0, 0, 0, #values * 24 + 8)
+            end
+
+            b.MouseButton1Click:Connect(function()
+                open = not open
+                if open then rebuild() list.Visible = true
+                else list.Visible = false end
+            end)
+        end
+
+        mkSection("SELEÇÃO DE TEMA")
+        mkDropdown("Tema", {"Default", "Zero Two"}, 1, function(v)
+            local name = (v == "Zero Two") and "ZeroTwo" or v
+            _G.ThemeManager:Apply(name)
+        end)
+        mkButton("Reaplicar tema atual", function()
+            _G.ThemeManager:Apply(_G.ThemeManager.Current)
+        end)
+        mkLabel("Escolha um tema. As cores da UI mudam instantaneamente.")
+
+        print("[Themes Tab] carregada.")
+    end)
+end
+
+
+-- ================================================================
+-- 4) ABA SKIN PREVIEW
+-- ================================================================
+do
+    local Players = game:GetService("Players")
+    local LocalPlayer = Players.LocalPlayer
+    local TweenService = game:GetService("TweenService")
+
+    local SkinPreview = {
+        loadedDescription = nil,
+        originalDescription = nil,
+        targetUserId = nil,
+        applied = false,
+    }
+
+    local function notify(title, msg, icon)
+        if _G.__L1GHT_UI and _G.__L1GHT_UI.Notifications then
+            _G.__L1GHT_UI.Notifications.Show(title, msg, icon or "💡", 2)
+        else
+            print("[" .. title .. "] " .. msg)
+        end
+    end
+
+    function SkinPreview.Load(input)
+        if not input or input == "" then
+            notify("Skin", "Digite nome ou UserId", "⚠️") return
+        end
+        local userId
+        if tonumber(input) then
+            userId = math.floor(tonumber(input))
+        else
+            local ok, id = pcall(function()
+                return Players:GetUserIdFromNameAsync(input)
+            end)
+            if ok and id then userId = id end
+        end
+        if not userId then
+            notify("Skin", "Jogador não encontrado", "❌") return
+        end
+        local ok, desc = pcall(function()
+            return Players:GetHumanoidDescriptionFromUserId(userId)
+        end)
+        if not ok or not desc then
+            notify("Skin", "Falha ao carregar skin", "❌") return
+        end
+        SkinPreview.loadedDescription = desc
+        SkinPreview.targetUserId = userId
+        notify("Skin", "Carregado: " .. userId, "✅")
+    end
+
+    function SkinPreview.Apply()
+        if not SkinPreview.loadedDescription then
+            notify("Skin", "Faça Load primeiro", "⚠️") return
+        end
+        local char = LocalPlayer.Character
+        if not char then notify("Skin", "Personagem não existe", "❌") return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then notify("Skin", "Humanoid não existe", "❌") return end
+
+        if not SkinPreview.originalDescription then
+            local ok, orig = pcall(function() return hum:GetAppliedDescription() end)
+            if ok and orig then SkinPreview.originalDescription = orig end
+        end
+        local ok = pcall(function()
+            hum:ApplyDescription(SkinPreview.loadedDescription)
+        end)
+        if not ok then notify("Skin", "Falha ao aplicar", "❌") return end
+        SkinPreview.applied = true
+        notify("Skin", "Preview aplicado", "✅")
+    end
+
+    function SkinPreview.Reset()
+        if not SkinPreview.originalDescription then
+            notify("Skin", "Nada para resetar", "⚠️") return
+        end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hum then return end
+        pcall(function() hum:ApplyDescription(SkinPreview.originalDescription) end)
+        SkinPreview.applied = false
+        notify("Skin", "Resetado", "✅")
+    end
+
+    LocalPlayer.CharacterAdded:Connect(function()
+        SkinPreview.originalDescription = nil
+        SkinPreview.applied = false
+    end)
+
+    _G.SkinPreview = SkinPreview
+
+    task.spawn(function()
+        task.wait(0.5)
+
+        local gui = (_G.__L1GHT_UI and _G.__L1GHT_UI.gui)
+                 or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
+        if not gui then return end
+        local window = gui:FindFirstChild("Window")
+        if not window then return end
+        local sidebar = window:FindFirstChild("Sidebar")
+        local content = window:FindFirstChild("Content")
+        if not sidebar or not content then return end
+
+        if content:FindFirstChild("__SkinPage") then return end
+
+        local UIRef = _G.__L1GHT_UI
+        local ThemeRef = UIRef and UIRef.Theme or {
+            Card = Color3.fromRGB(14,14,22),
+            CardHover = Color3.fromRGB(20,20,30),
+            Accent = Color3.fromRGB(120,130,155),
+            AccentDim = Color3.fromRGB(60,65,85),
+            Text = Color3.fromRGB(240,240,250),
+            TextSecondary = Color3.fromRGB(160,160,175),
+            TextMuted = Color3.fromRGB(110,110,125),
+            Border = Color3.fromRGB(30,30,42),
+            SurfaceSecondary = Color3.fromRGB(18,18,26),
+        }
+
+        local btn = Instance.new("TextButton")
+        btn.Name = "__SkinBtn"
+        btn.Size = UDim2.new(1, 0, 0, 28)
+        btn.BackgroundColor3 = ThemeRef.Card
+        btn.BackgroundTransparency = 0.6
+        btn.BorderSizePixel = 0
+        btn.Text = ""
+        btn.AutoButtonColor = false
+        btn.ZIndex = 21
+        btn.Parent = sidebar
+        local bCorner = Instance.new("UICorner")
+        bCorner.CornerRadius = UDim.new(0, 6)
+        bCorner.Parent = btn
+
+        local indicator = Instance.new("Frame")
+        indicator.Size = UDim2.fromOffset(2, 12)
+        indicator.Position = UDim2.new(0, 4, 0.5, -6)
+        indicator.BackgroundColor3 = ThemeRef.Accent
+        indicator.BorderSizePixel = 0
+        indicator.Visible = false
+        indicator.Name = "Indicator"
+        indicator.ZIndex = 22
+        indicator.Parent = btn
+        local iCorner = Instance.new("UICorner")
+        iCorner.CornerRadius = UDim.new(1, 0)
+        iCorner.Parent = indicator
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, -18, 1, 0)
+        label.Position = UDim2.fromOffset(14, 0)
+        label.BackgroundTransparency = 1
+        label.Text = "🧍 SKIN"
+        label.Font = Enum.Font.GothamBold
+        label.TextSize = 10
+        label.TextColor3 = ThemeRef.TextSecondary
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.ZIndex = 22
+        label.Parent = btn
+
+        local page = Instance.new("ScrollingFrame")
+        page.Name = "__SkinPage"
+        page.Size = UDim2.new(1, 0, 1, 0)
+        page.BackgroundTransparency = 1
+        page.BorderSizePixel = 0
+        page.ScrollBarThickness = 2
+        page.ScrollBarImageColor3 = ThemeRef.Border
+        page.ScrollingDirection = Enum.ScrollingDirection.Y
+        page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+        page.CanvasSize = UDim2.new(0, 0, 0, 0)
+        page.Visible = false
+        page.ZIndex = 21
+        page.Parent = content
+
+        local pLayout = Instance.new("UIListLayout")
+        pLayout.Padding = UDim.new(0, 6)
+        pLayout.SortOrder = Enum.SortOrder.LayoutOrder
+        pLayout.Parent = page
+
+        local pPad = Instance.new("UIPadding")
+        pPad.PaddingTop = UDim.new(0, 8)
+        pPad.PaddingBottom = UDim.new(0, 8)
+        pPad.PaddingLeft = UDim.new(0, 10)
+        pPad.PaddingRight = UDim.new(0, 10)
+        pPad.Parent = page
+
+        local function hideWhenOtherShows()
+            for _, c in ipairs(content:GetChildren()) do
+                if c ~= page and c:IsA("ScrollingFrame") and c.Visible then
+                    page.Visible = false
+                    indicator.Visible = false
+                    btn.BackgroundTransparency = 0.6
+                    btn.BackgroundColor3 = ThemeRef.Card
+                    label.TextColor3 = ThemeRef.TextSecondary
+                    return
+                end
+            end
+        end
+        for _, c in ipairs(content:GetChildren()) do
+            if c:IsA("ScrollingFrame") and c ~= page then
+                c:GetPropertyChangedSignal("Visible"):Connect(hideWhenOtherShows)
+            end
+        end
+
+        btn.MouseButton1Click:Connect(function()
+            for _, c in ipairs(content:GetChildren()) do
+                if c:IsA("ScrollingFrame") and c ~= page then
+                    c.Visible = false
+                end
+            end
+            page.Visible = true
+            indicator.Visible = true
+            btn.BackgroundTransparency = 0.3
+            btn.BackgroundColor3 = ThemeRef.AccentDim
+            label.TextColor3 = ThemeRef.Text
+        end)
+        btn.MouseEnter:Connect(function()
+            if page.Visible then return end
+            TweenService:Create(btn, TweenInfo.new(0.12), {
+                BackgroundTransparency = 0.4, BackgroundColor3 = ThemeRef.CardHover,
+            }):Play()
+        end)
+        btn.MouseLeave:Connect(function()
+            if page.Visible then return end
+            TweenService:Create(btn, TweenInfo.new(0.12), {
+                BackgroundTransparency = 0.6, BackgroundColor3 = ThemeRef.Card,
+            }):Play()
+        end)
+
+        local function mkSection(text)
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(1, 0, 0, 22)
+            f.BackgroundTransparency = 1
+            f.ZIndex = 22
+            f.Parent = page
+            local line = Instance.new("Frame")
+            line.Size = UDim2.fromOffset(2, 16)
+            line.Position = UDim2.fromOffset(0, 3)
+            line.BackgroundColor3 = ThemeRef.Accent
+            line.BorderSizePixel = 0
+            line.ZIndex = 23
+            line.Parent = f
+            local c = Instance.new("UICorner")
+            c.CornerRadius = UDim.new(1, 0)
+            c.Parent = line
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(1, -12, 1, 0)
+            l.Position = UDim2.fromOffset(10, 0)
+            l.BackgroundTransparency = 1
+            l.Text = text
+            l.Font = Enum.Font.GothamBold
+            l.TextSize = 11
+            l.TextColor3 = ThemeRef.Accent
+            l.TextXAlignment = Enum.TextXAlignment.Left
+            l.ZIndex = 23
+            l.Parent = f
+        end
+
+        local function mkInput(placeholder)
+            local f = Instance.new("Frame")
+            f.Size = UDim2.new(1, 0, 0, 34)
+            f.BackgroundColor3 = ThemeRef.Card
+            f.BackgroundTransparency = 0.15
+            f.BorderSizePixel = 0
+            f.ZIndex = 22
+            f.Parent = page
+            local fc = Instance.new("UICorner")
+            fc.CornerRadius = UDim.new(0, 6)
+            fc.Parent = f
+            local fs = Instance.new("UIStroke")
+            fs.Color = ThemeRef.Border
+            fs.Thickness = 1
+            fs.Parent = f
+            local box = Instance.new("TextBox")
+            box.Size = UDim2.new(1, -16, 1, -8)
+            box.Position = UDim2.fromOffset(8, 4)
+            box.BackgroundColor3 = ThemeRef.SurfaceSecondary
+            box.BorderSizePixel = 0
+            box.Text = ""
+            box.PlaceholderText = placeholder or "..."
+            box.TextColor3 = ThemeRef.Text
+            box.PlaceholderColor3 = ThemeRef.TextMuted
+            box.Font = Enum.Font.GothamMedium
+            box.TextSize = 11
+            box.ClearTextOnFocus = false
+            box.ZIndex = 23
+            box.Parent = f
+            local bc = Instance.new("UICorner")
+            bc.CornerRadius = UDim.new(0, 6)
+            bc.Parent = box
+            return box
+        end
+
+        local function mkButton(text, cb)
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 30)
+            b.BackgroundColor3 = ThemeRef.AccentDim
+            b.BorderSizePixel = 0
+            b.Text = text
+            b.TextColor3 = ThemeRef.Text
+            b.Font = Enum.Font.GothamBold
+            b.TextSize = 11
+            b.AutoButtonColor = false
+            b.ZIndex = 22
+            b.Parent = page
+            local bc = Instance.new("UICorner")
+            bc.CornerRadius = UDim.new(0, 6)
+            bc.Parent = b
+            local bs = Instance.new("UIStroke")
+            bs.Color = ThemeRef.Border
+            bs.Thickness = 1
+            bs.Parent = b
+            b.MouseButton1Click:Connect(function() pcall(cb) end)
+            b.MouseEnter:Connect(function()
+                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.Accent}):Play()
+            end)
+            b.MouseLeave:Connect(function()
+                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.AccentDim}):Play()
+            end)
+            return b
+        end
+
+        local function mkLabel(text)
+            local l = Instance.new("TextLabel")
+            l.Size = UDim2.new(1, 0, 0, 20)
+            l.BackgroundTransparency = 1
+            l.Text = text
+            l.Font = Enum.Font.GothamMedium
+            l.TextSize = 10
+            l.TextColor3 = ThemeRef.TextMuted
+            l.TextXAlignment = Enum.TextXAlignment.Left
+            l.ZIndex = 22
+            l.Parent = page
+        end
+
+        mkSection("SKIN PREVIEW")
+        local inputBox = mkInput("Player Name ou UserId...")
+        mkButton("Load", function() SkinPreview.Load(inputBox.Text) end)
+        mkButton("Apply Preview", function() SkinPreview.Apply() end)
+        mkButton("Reset", function() SkinPreview.Reset() end)
+        mkLabel("Carrega a skin de outro jogador no seu personagem.")
+        mkLabel("Reset restaura a aparência original.")
+
+        print("[Skin Tab] carregada.")
+    end)
+end
