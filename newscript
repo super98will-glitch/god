@@ -1407,12 +1407,35 @@ end)
 -- ================================================================
 -- SEÇÃO 34: INVISIBLE V1 (REMOTE HOOK)
 -- ================================================================
-local InvisV1 = { active = false, blockRemote = false, hooked = false, mt = nil, old = nil }
+local InvisV1 = {
+    active = false,
+    blockRemote = false,
+    hooked = false,
+    mt = nil,
+    old = nil,
+    generation = 0,
+    savedCFrame = nil,
+}
+
 local function toggleInvisV1(state)
+    InvisV1.generation = InvisV1.generation + 1
+    local myGen = InvisV1.generation
+
     if state then
-        InvisV1.active = true
-        local Remote = RC.Replication
-        if not Remote then return end
+        local Remote = RC and RC.Replication
+        if not Remote then
+            InvisV1.active = false
+            InvisV1.blockRemote = false
+            return
+        end
+        local char = LocalPlayer.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            InvisV1.active = false
+            InvisV1.blockRemote = false
+            return
+        end
+
         if not InvisV1.hooked and getrawmetatable and setreadonly then
             InvisV1.hooked = true
             local mt = getrawmetatable(game)
@@ -1421,29 +1444,48 @@ local function toggleInvisV1(state)
             local old = mt.__namecall
             InvisV1.old = old
             mt.__namecall = newcclosure(function(self, ...)
-                if self == Remote and getnamecallmethod() == "FireServer" and InvisV1.blockRemote then
+                if self == RC.Replication and getnamecallmethod() == "FireServer"
+                    and InvisV1.blockRemote and InvisV1.active then
                     return nil
                 end
                 return old(self, ...)
             end)
             setreadonly(mt, true)
         end
-        local hrp = Helpers.GetHRP(LocalPlayer.Character)
-        if not hrp then return end
-        local originalCF = hrp.CFrame
-        local flyingCF = originalCF + Vector3.new(0, 50000, 0)
+
+        InvisV1.active = true
+        InvisV1.savedCFrame = hrp.CFrame
+
+        local flyingCF = hrp.CFrame + Vector3.new(0, 50000, 0)
+
         task.spawn(function()
-            for _ = 1, 10 do
-                hrp.CFrame = flyingCF
+            for i = 1, 10 do
+                if InvisV1.generation ~= myGen or not InvisV1.active then return end
+                local c = LocalPlayer.Character
+                local h = c and c:FindFirstChild("HumanoidRootPart")
+                if not h then return end
+                h.CFrame = flyingCF
                 pcall(function() Remote:FireServer() end)
                 task.wait(0.1)
             end
-            InvisV1.blockRemote = true
-            hrp.CFrame = originalCF
+            if InvisV1.generation == myGen and InvisV1.active then
+                InvisV1.blockRemote = true
+                local c = LocalPlayer.Character
+                local h = c and c:FindFirstChild("HumanoidRootPart")
+                if h and InvisV1.savedCFrame then
+                    h.CFrame = InvisV1.savedCFrame
+                end
+            end
         end)
     else
         InvisV1.active = false
         InvisV1.blockRemote = false
+        InvisV1.savedCFrame = nil
+        local c = LocalPlayer.Character
+        local h = c and c:FindFirstChild("HumanoidRootPart")
+        if h and h.Position.Y > 40000 then
+            h.CFrame = CFrame.new(h.Position.X, 5, h.Position.Z)
+        end
     end
 end
 
@@ -1451,154 +1493,173 @@ end
 -- SEÇÃO 35: INVISIBLE V2 (PLATFORM + MIRROR)
 -- ================================================================
 local InvisV2 = {
-    enabled = false, platform = nil, mirrorModel = nil, mirrorPart = nil,
-    originalCameraSubject = nil, movementConnection = nil,
-    lastJumpHeight = 0, connections = {}
+    enabled = false,
+    mirrorModel = nil,
+    mirrorHRP = nil,
+    movementConn = nil,
+    positionConn = nil,
+    cleanupConn = nil,
+    savedProps = {},
+    hiddenY = 0,
+    originalCameraSubject = nil,
 }
+
+local function InvisV2_Cleanup()
+    if InvisV2.movementConn then
+        pcall(function() InvisV2.movementConn:Disconnect() end)
+        InvisV2.movementConn = nil
+    end
+    if InvisV2.positionConn then
+        pcall(function() InvisV2.positionConn:Disconnect() end)
+        InvisV2.positionConn = nil
+    end
+    if InvisV2.cleanupConn then
+        pcall(function() InvisV2.cleanupConn:Disconnect() end)
+        InvisV2.cleanupConn = nil
+    end
+
+    if InvisV2.mirrorModel then
+        pcall(function() InvisV2.mirrorModel:Destroy() end)
+        InvisV2.mirrorModel = nil
+        InvisV2.mirrorHRP = nil
+    end
+
+    local char = LocalPlayer.Character
+    if char then
+        for part, props in pairs(InvisV2.savedProps) do
+            if part and part.Parent then
+                pcall(function()
+                    part.Transparency = props.Transparency
+                    part.CanCollide = props.CanCollide
+                    part.Anchored = props.Anchored
+                end)
+            end
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            pcall(function()
+                hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.Viewer
+            end)
+        end
+    end
+    InvisV2.savedProps = {}
+
+    pcall(function()
+        local curChar = LocalPlayer.Character
+        if curChar then
+            local h = curChar:FindFirstChildOfClass("Humanoid")
+            if h then
+                workspace.CurrentCamera.CameraSubject = h
+            elseif InvisV2.originalCameraSubject then
+                workspace.CurrentCamera.CameraSubject = InvisV2.originalCameraSubject
+            end
+        elseif InvisV2.originalCameraSubject then
+            workspace.CurrentCamera.CameraSubject = InvisV2.originalCameraSubject
+        end
+    end)
+
+    InvisV2.enabled = false
+end
+
 local function toggleInvisV2(state)
     if state then
         if InvisV2.enabled then return end
-        local playerCharacter = LocalPlayer.Character
-        if not playerCharacter then return end
+
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
         local groundUnion
         pcall(function() groundUnion = Workspace.Map.Structural.Ground.Union end)
         if not groundUnion then return end
 
-        local platformPart = Instance.new("Part")
-        platformPart.Name = "InvisibilityPlatform"
-        platformPart.Size = Vector3.new(2000, 1, 2000)
-        platformPart.Position = Vector3.new(
-            playerCharacter.HumanoidRootPart.Position.X,
-            groundUnion.Position.Y - 20,
-            playerCharacter.HumanoidRootPart.Position.Z
-        )
-        platformPart.Anchored = true
-        platformPart.Transparency = 0.5
-        platformPart.BrickColor = BrickColor.new("Bright blue")
-        platformPart.Parent = Workspace
-        InvisV2.platform = platformPart
-
-        if not playerCharacter.Archivable then playerCharacter.Archivable = true end
-        local clone = playerCharacter:Clone()
-        clone.Name = "MirrorClone"
-        clone.Parent = Workspace
-        for _, d in ipairs(clone:GetDescendants()) do
-            if d:IsA("Script") or d:IsA("LocalScript") then d:Destroy() end
-        end
-        for _, d in ipairs(clone:GetDescendants()) do
-            if d:IsA("BasePart") then
-                d.CanCollide = false
-                d.Massless = true
-                d.Anchored = false
-            end
-        end
-        local hrp = clone:FindFirstChild("HumanoidRootPart") or clone.PrimaryPart
-        if not hrp then
-            clone:Destroy()
-            if platformPart then platformPart:Destroy() end
-            return
-        end
-        clone.PrimaryPart = hrp
-        local humanoid = clone:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            humanoid.PlatformStand = true
-            humanoid.AutoRotate = false
-        end
-        local srcHRP = playerCharacter:FindFirstChild("HumanoidRootPart")
-        if srcHRP then clone:PivotTo(srcHRP.CFrame) end
-        InvisV2.mirrorModel = clone
-        InvisV2.mirrorPart = hrp
-        InvisV2.originalCameraSubject = workspace.CurrentCamera.CameraSubject
-
-        for _, part in pairs(playerCharacter:GetChildren()) do
-            if part:IsA("BasePart") then part.CanCollide = false end
-        end
-
-        local humanoidRootPart = playerCharacter.HumanoidRootPart
-        local originalPosition = humanoidRootPart.Position
-        local hum = playerCharacter:FindFirstChildOfClass("Humanoid")
-        local hip = hum and hum.HipHeight or 2
-        local hrpHalf = humanoidRootPart.Size.Y * 0.5
-        local platformTopY = platformPart.Position.Y + (platformPart.Size.Y * 0.5)
-        local targetCFrame = CFrame.new(originalPosition.X, platformTopY + hip + hrpHalf, originalPosition.Z)
-        pcall(function()
-            require(LocalPlayer.PlayerScripts.Character.FullCustomReplication).Override(playerCharacter, targetCFrame)
-        end)
-
-        local mirrorHum = clone:FindFirstChildOfClass("Humanoid")
-        workspace.CurrentCamera.CameraSubject = mirrorHum or hrp
-
-        InvisV2.movementConnection = RunService.Heartbeat:Connect(function(dt)
-            if not InvisV2.enabled then return end
-            local currentChar = LocalPlayer.Character
-            if not currentChar or not hrp then return end
-            local currentHRP = currentChar:FindFirstChild("HumanoidRootPart")
-            if not currentHRP then return end
-            local groundY
-            pcall(function() groundY = Workspace.Map.Structural.Ground.Union.Position.Y end)
-            if not groundY then return end
-            local platformTopY2 = platformPart and (platformPart.Position.Y + platformPart.Size.Y * 0.5) or groundY
-            local targetJumpHeight = math.max(0, (currentHRP.Position.Y - platformTopY2) * 0.5)
-            targetJumpHeight = math.min(targetJumpHeight, 20)
-            dt = typeof(dt) == "number" and dt or 1/60
-            local smoothing = math.clamp(dt * 10, 0, 1)
-            InvisV2.lastJumpHeight = InvisV2.lastJumpHeight + (targetJumpHeight - InvisV2.lastJumpHeight) * smoothing
-            local halfHeight = 3
-            local newPos = Vector3.new(currentHRP.Position.X, groundY + halfHeight + InvisV2.lastJumpHeight, currentHRP.Position.Z)
-            local look = currentHRP.CFrame.LookVector
-            local flatLook = Vector3.new(look.X, 0, look.Z)
-            local targetCF
-            if flatLook.Magnitude > 0 then
-                targetCF = CFrame.new(newPos, newPos + flatLook.Unit)
-            else
-                targetCF = CFrame.new(newPos)
-            end
-            if clone and clone.PrimaryPart then clone:PivotTo(targetCF) else hrp.CFrame = targetCF end
-        end)
-        table.insert(InvisV2.connections, InvisV2.movementConnection)
-
-        local deathConn = LocalPlayer.CharacterAdded:Connect(function()
-            if InvisV2.enabled then toggleInvisV2(false) end
-        end)
-        table.insert(InvisV2.connections, deathConn)
         InvisV2.enabled = true
-    else
-        if not InvisV2.enabled then return end
-        local playerCharacter = LocalPlayer.Character
-        if playerCharacter then
-            if InvisV2.mirrorModel and InvisV2.mirrorModel.PrimaryPart then
-                local humanoidRootPart = playerCharacter.HumanoidRootPart
-                local humanoid = playerCharacter:FindFirstChildOfClass("Humanoid")
-                local hip = humanoid and humanoid.HipHeight or 2
-                local hrpHalf = humanoidRootPart.Size.Y * 0.5
-                local groundY
-                pcall(function() groundY = Workspace.Map.Structural.Ground.Union.Position.Y end)
-                if groundY then
-                    local targetCFrame = CFrame.new(
-                        InvisV2.mirrorModel.PrimaryPart.Position.X,
-                        groundY + hip + hrpHalf,
-                        InvisV2.mirrorModel.PrimaryPart.Position.Z
-                    )
-                    pcall(function()
-                        require(LocalPlayer.PlayerScripts.Character.FullCustomReplication).Override(playerCharacter, targetCFrame)
-                    end)
+        InvisV2.originalCameraSubject = workspace.CurrentCamera.CameraSubject
+        InvisV2.hiddenY = groundUnion.Position.Y - 100
+
+        InvisV2.savedProps = {}
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then
+                InvisV2.savedProps[part] = {
+                    Transparency = part.Transparency,
+                    CanCollide = part.CanCollide,
+                    Anchored = part.Anchored,
+                }
+                part.Transparency = 1
+                part.CanCollide = false
+                part.Anchored = true
+            end
+        end
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+        end
+
+        local ok, err = pcall(function()
+            if not char.Archivable then char.Archivable = true end
+            local clone = char:Clone()
+            clone.Name = "MirrorClone"
+            for _, d in ipairs(clone:GetDescendants()) do
+                if d:IsA("Script") or d:IsA("LocalScript") then
+                    d:Destroy()
+                elseif d:IsA("BasePart") then
+                    d.Transparency = 0
+                    d.CanCollide = false
+                    d.Massless = true
+                    d.Anchored = true
                 end
             end
-            for _, part in pairs(playerCharacter:GetChildren()) do
-                if part:IsA("BasePart") then part.CanCollide = true end
+            clone.Parent = Workspace
+            InvisV2.mirrorModel = clone
+            InvisV2.mirrorHRP = clone:FindFirstChild("HumanoidRootPart")
+            if InvisV2.mirrorHRP then
+                InvisV2.mirrorHRP.CFrame = CFrame.new(hrp.Position.X, groundUnion.Position.Y + 3, hrp.Position.Z)
             end
-            workspace.CurrentCamera.CameraSubject = playerCharacter:FindFirstChildOfClass("Humanoid") or
-                                                   playerCharacter:FindFirstChild("HumanoidRootPart")
+        end)
+        if not ok then
+            warn("[InvisV2] Falha ao criar mirror:", err)
+            InvisV2_Cleanup()
+            return
         end
-        if InvisV2.platform then InvisV2.platform:Destroy() InvisV2.platform = nil end
-        if InvisV2.mirrorModel then InvisV2.mirrorModel:Destroy() InvisV2.mirrorModel = nil InvisV2.mirrorPart = nil end
-        for _, conn in ipairs(InvisV2.connections) do
-            if conn then conn:Disconnect() end
-        end
-        InvisV2.connections = {}
-        InvisV2.movementConnection = nil
-        InvisV2.lastJumpHeight = 0
-        InvisV2.enabled = false
+
+        local mirrorHum = InvisV2.mirrorModel:FindFirstChildOfClass("Humanoid")
+        workspace.CurrentCamera.CameraSubject = mirrorHum or InvisV2.mirrorHRP
+
+        InvisV2.positionConn = RunService.Stepped:Connect(function()
+            if not InvisV2.enabled then return end
+            local c = LocalPlayer.Character
+            if not c then return end
+            local h = c:FindFirstChild("HumanoidRootPart")
+            if not h then return end
+            local pos = h.Position
+            local look = h.CFrame.LookVector
+            local flat = Vector3.new(look.X, 0, look.Z)
+            if flat.Magnitude < 0.01 then flat = Vector3.new(0, 0, 1) end
+            h.CFrame = CFrame.lookAt(
+                Vector3.new(pos.X, InvisV2.hiddenY, pos.Z),
+                Vector3.new(pos.X, InvisV2.hiddenY, pos.Z) + flat.Unit
+            )
+        end)
+
+        InvisV2.movementConn = RunService.Heartbeat:Connect(function()
+            if not InvisV2.enabled then return end
+            local c = LocalPlayer.Character
+            if not c then return end
+            local h = c:FindFirstChild("HumanoidRootPart")
+            if not h then return end
+            if not InvisV2.mirrorHRP or not InvisV2.mirrorHRP.Parent then return end
+            local groundY = groundUnion.Position.Y
+            local targetCF = CFrame.new(h.Position.X, groundY + 3, h.Position.Z)
+            pcall(function() InvisV2.mirrorHRP.CFrame = targetCF end)
+        end)
+
+        InvisV2.cleanupConn = LocalPlayer.CharacterAdded:Connect(function()
+            if InvisV2.enabled then InvisV2_Cleanup() end
+        end)
+    else
+        if not InvisV2.enabled then return end
+        InvisV2_Cleanup()
     end
 end
 
@@ -3222,64 +3283,36 @@ end)
 print("⚡ GOD'S PLAN HUB V7.0 carregado — pressione TAB 2x para abrir/fechar")
 
 -- ================================================================
--- VISUAL POLISH + THEME MANAGER + ABA THEMES + ABA SKIN
--- Bloco único. Não substitui nada além do "Visual Polish" antigo.
+-- PACOTE FINAL: VISUAL POLISH + THEMES + SKIN PREVIEW + HEADER
 -- ================================================================
 
--- ================================================================
--- 1) VISUAL POLISH — CONSOLIDADO (corrigido)
--- ================================================================
+-- ────────────────────────────────────────────────────────────────
+-- [1] VISUAL POLISH: borda 4 cantos + coroa + normalização
+-- ────────────────────────────────────────────────────────────────
 task.spawn(function()
     task.wait(0.2)
-
     local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
-
+    local LP = Players.LocalPlayer
     local gui = (_G.__L1GHT_UI and _G.__L1GHT_UI.gui)
-             or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
-    if not gui then warn("[Visual Polish] UI não encontrada.") return end
-
+             or LP.PlayerGui:FindFirstChild("L1GHTHub")
+    if not gui then return end
     local window = gui:FindFirstChild("Window")
     if not window then return end
 
-    -- [1] Dropdowns acima de tudo
     gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
 
-    -- [2] Cantos internos (AccentBar / Header / Sidebar)
     local wc = window:FindFirstChildOfClass("UICorner")
     local wR = wc and wc.CornerRadius.Offset or 12
-
-    local accent = window:FindFirstChild("AccentBar") or window:FindFirstChild("accentBar")
-    if accent and accent:IsA("GuiObject") then
-        local ac = accent:FindFirstChildOfClass("UICorner")
-        if not ac then ac = Instance.new("UICorner") ac.Parent = accent end
-        ac.CornerRadius = UDim.new(0, math.max(0, wR - 1))
-    end
-
     local header = window:FindFirstChild("Header")
-    if header and header:IsA("GuiObject") then
-        local hc = header:FindFirstChildOfClass("UICorner")
-        if not hc then hc = Instance.new("UICorner") hc.Parent = header end
-        hc.CornerRadius = UDim.new(0, math.max(0, wR - 2))
-    end
+    local accent = window:FindFirstChild("AccentBar") or window:FindFirstChild("accentBar")
 
-    local sidebar = window:FindFirstChild("Sidebar")
-    if sidebar and sidebar:IsA("GuiObject") then
-        local sc = sidebar:FindFirstChildOfClass("UICorner")
-        if not sc then sc = Instance.new("UICorner") sc.Parent = sidebar end
-        sc.CornerRadius = UDim.new(0, math.max(0, wR - 2))
-    end
-
-    -- [3] UIStroke: remove duplicados, normaliza
     for _, d in ipairs(gui:GetDescendants()) do
         if d:IsA("UIStroke") then
-            local parent = d.Parent
-            if not parent or not parent:IsA("GuiObject") then
-                d:Destroy()
+            local p = d.Parent
+            if not p or not p:IsA("GuiObject") then d:Destroy()
             else
-                local first = parent:FindFirstChildOfClass("UIStroke")
-                if first and first ~= d then
-                    d:Destroy()
+                local first = p:FindFirstChildOfClass("UIStroke")
+                if first and first ~= d then d:Destroy()
                 else
                     d.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
                     d.LineJoinMode = Enum.LineJoinMode.Round
@@ -3290,7 +3323,6 @@ task.spawn(function()
         end
     end
 
-    -- [4] UICorner: raio ≤ metade do frame
     for _, d in ipairs(gui:GetDescendants()) do
         if d:IsA("UICorner") and d.Parent and d.Parent:IsA("GuiObject") then
             local p = d.Parent
@@ -3302,37 +3334,25 @@ task.spawn(function()
         end
     end
 
-    -- [5] Borda assimétrica: topo quadrado, base arredondada
-    if not wc then
-        wc = Instance.new("UICorner")
-        wc.Parent = window
-    end
-    if wc.CornerRadius.Offset < 8 then
-        wc.CornerRadius = UDim.new(0, 12)
-    end
+    if not wc then wc = Instance.new("UICorner") wc.Parent = window end
+    if wc.CornerRadius.Offset < 8 then wc.CornerRadius = UDim.new(0, 12) end
 
     for _, n in ipairs({"__SquareTL", "__SquareTR"}) do
         local old = window:FindFirstChild(n)
         if old then old:Destroy() end
     end
 
-    local R = wc.CornerRadius.Offset
-    local capSize = R + 2
-    local function makeCap(name, pos)
-        local f = Instance.new("Frame")
-        f.Name = name
-        f.Size = UDim2.fromOffset(capSize, capSize)
-        f.Position = pos
-        f.BackgroundColor3 = window.BackgroundColor3
-        f.BackgroundTransparency = window.BackgroundTransparency
-        f.BorderSizePixel = 0
-        f.ZIndex = window.ZIndex + 1
-        f.Parent = window
+    if header then
+        local hc = header:FindFirstChildOfClass("UICorner")
+        if not hc then hc = Instance.new("UICorner") hc.Parent = header end
+        hc.CornerRadius = UDim.new(0, math.max(0, wc.CornerRadius.Offset - 2))
     end
-    makeCap("__SquareTL", UDim2.fromOffset(-1, -1))
-    makeCap("__SquareTR", UDim2.new(1, -capSize + 1, 0, -1))
+    if accent then
+        local ac = accent:FindFirstChildOfClass("UICorner")
+        if not ac then ac = Instance.new("UICorner") ac.Parent = accent end
+        ac.CornerRadius = UDim.new(0, math.max(0, wc.CornerRadius.Offset - 1))
+    end
 
-    -- [6] Coroa antes de "GOD'S PLAN"
     if header then
         for _, c in ipairs(header:GetChildren()) do
             if c:IsA("TextLabel") and c.Text:find("GOD'S PLAN", 1, true) then
@@ -3343,17 +3363,15 @@ task.spawn(function()
             end
         end
     end
-
-    print("[Visual Polish] aplicado.")
 end)
 
 
--- ================================================================
--- 2) THEME MANAGER — sistema base
--- ================================================================
+-- ────────────────────────────────────────────────────────────────
+-- [2] THEME MANAGER
+-- ────────────────────────────────────────────────────────────────
 do
     local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
+    local LP = Players.LocalPlayer
 
     local ThemeManager = {
         Current = "Default",
@@ -3375,90 +3393,63 @@ do
                 BackgroundImageTransparency = 1,
             },
             ["ZeroTwo"] = {
-                Background = Color3.fromRGB(20, 8, 20),
-                Surface = Color3.fromRGB(35, 15, 35),
-                SurfaceSecondary = Color3.fromRGB(45, 20, 45),
-                Card = Color3.fromRGB(40, 18, 40),
-                CardHover = Color3.fromRGB(55, 25, 55),
-                Accent = Color3.fromRGB(255, 100, 150),
-                AccentDim = Color3.fromRGB(180, 60, 100),
-                Text = Color3.fromRGB(255, 230, 240),
-                TextSecondary = Color3.fromRGB(220, 160, 180),
-                TextMuted = Color3.fromRGB(150, 100, 120),
-                Border = Color3.fromRGB(80, 30, 60),
-                BorderLight = Color3.fromRGB(120, 50, 90),
-                BackgroundImage = "",
-                BackgroundImageTransparency = 1,
+                Background = Color3.fromRGB(10, 12, 18),
+                Surface = Color3.fromRGB(16, 24, 45),
+                SurfaceSecondary = Color3.fromRGB(24, 34, 60),
+                Card = Color3.fromRGB(20, 30, 55),
+                CardHover = Color3.fromRGB(32, 46, 78),
+                Accent = Color3.fromRGB(255, 80, 140),
+                AccentDim = Color3.fromRGB(180, 40, 95),
+                Text = Color3.fromRGB(235, 240, 250),
+                TextSecondary = Color3.fromRGB(160, 180, 215),
+                TextMuted = Color3.fromRGB(110, 130, 165),
+                Border = Color3.fromRGB(60, 20, 40),
+                BorderLight = Color3.fromRGB(90, 30, 60),
+                BackgroundImage = "rbxassetid://87353595377346",
+                BackgroundImageTransparency = 0.55,
             },
         }
     }
 
     local function recolorTree(obj, t)
         if not obj or not obj.Parent then return end
-
         if obj:IsA("Frame") or obj:IsA("TextButton") then
-            if obj.Name == "Window" then
-                obj.BackgroundColor3 = t.Surface
-            elseif obj.Name == "Header" then
-                obj.BackgroundColor3 = t.SurfaceSecondary
-            elseif obj.Name == "Sidebar" then
-                obj.BackgroundColor3 = t.SurfaceSecondary
-            elseif obj.Name == "__SquareTL" or obj.Name == "__SquareTR" then
-                obj.BackgroundColor3 = t.Surface
-                obj.BackgroundTransparency = obj.Parent and obj.Parent.BackgroundTransparency or 0
+            if obj.Name == "Window" then obj.BackgroundColor3 = t.Surface
+            elseif obj.Name == "Header" then obj.BackgroundColor3 = Color3.fromRGB(13, 17, 29)
+            elseif obj.Name == "Sidebar" then obj.BackgroundColor3 = t.SurfaceSecondary
             elseif obj:FindFirstChildOfClass("UIStroke") then
                 if obj:IsA("TextButton") and obj.Text ~= "" and obj.Text ~= "✕" then
                     obj.BackgroundColor3 = t.AccentDim
-                else
-                    obj.BackgroundColor3 = t.Card
-                end
+                else obj.BackgroundColor3 = t.Card end
             end
-
             local stroke = obj:FindFirstChildOfClass("UIStroke")
             if stroke then stroke.Color = t.Border end
         end
-
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            if obj.TextSize >= 13 then
-                obj.TextColor3 = t.Text
-            elseif obj.TextSize >= 11 then
-                obj.TextColor3 = t.TextSecondary
-            else
-                obj.TextColor3 = t.TextMuted
-            end
+            if obj.Name == "__Crown" then
+                obj.TextColor3 = Color3.fromRGB(250, 204, 21)
+            elseif obj.Parent and obj.Parent.Name == "Header" and obj.Text:find("GOD'S PLAN", 1, true) then
+                obj.TextColor3 = Color3.fromRGB(255, 255, 255)
+            elseif obj.TextSize >= 13 then obj.TextColor3 = t.Text
+            elseif obj.TextSize >= 11 then obj.TextColor3 = t.TextSecondary
+            else obj.TextColor3 = t.TextMuted end
         end
-
-        for _, c in ipairs(obj:GetChildren()) do
-            recolorTree(c, t)
-        end
+        for _, c in ipairs(obj:GetChildren()) do recolorTree(c, t) end
     end
 
     function ThemeManager:Apply(name)
         local t = self.Themes[name]
         if not t then return end
         self.Current = name
-
         local UIRef = _G.__L1GHT_UI
         if UIRef and UIRef.Theme then
             for k, v in pairs(t) do UIRef.Theme[k] = v end
         end
-
-        local gui = (UIRef and UIRef.gui)
-                 or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
+        local gui = (UIRef and UIRef.gui) or LP.PlayerGui:FindFirstChild("L1GHTHub")
         if not gui then return end
-
         local window = gui:FindFirstChild("Window")
         if not window then return end
-
         recolorTree(window, t)
-
-        for _, nm in ipairs({"__SquareTL", "__SquareTR"}) do
-            local cap = window:FindFirstChild(nm)
-            if cap then
-                cap.BackgroundColor3 = t.Surface
-                cap.BackgroundTransparency = window.BackgroundTransparency
-            end
-        end
 
         local bg = window:FindFirstChild("__ThemeBackground")
         if not bg then
@@ -3483,83 +3474,190 @@ do
     end
 
     _G.ThemeManager = ThemeManager
-    print("[ThemeManager] carregado.")
 end
 
 
--- ================================================================
--- 3) ABA THEMES
--- ================================================================
+-- ────────────────────────────────────────────────────────────────
+-- [3] HEADER: remove linha + compacta + reorganiza
+-- ────────────────────────────────────────────────────────────────
+task.spawn(function()
+    task.wait(0.45)
+    local Players = game:GetService("Players")
+    local LP = Players.LocalPlayer
+    local TweenService = game:GetService("TweenService")
+    local gui = (_G.__L1GHT_UI and _G.__L1GHT_UI.gui)
+             or LP.PlayerGui:FindFirstChild("L1GHTHub")
+    if not gui then return end
+    local window = gui:FindFirstChild("Window")
+    if not window then return end
+
+    for _, nm in ipairs({"AccentBar", "accentBar"}) do
+        local a = window:FindFirstChild(nm)
+        if a then a:Destroy() end
+    end
+
+    local header = window:FindFirstChild("Header")
+    if not header then return end
+
+    header.Size = UDim2.new(1, 0, 0, 30)
+    header.BackgroundColor3 = Color3.fromRGB(13, 17, 29)
+    header.BackgroundTransparency = 0.2
+    local hs = header:FindFirstChildOfClass("UIStroke")
+    if hs then hs:Destroy() end
+    local hc = header:FindFirstChildOfClass("UICorner")
+    if not hc then hc = Instance.new("UICorner") hc.Parent = header end
+    hc.CornerRadius = UDim.new(0, 8)
+
+    for _, c in ipairs(header:GetChildren()) do
+        if c:IsA("TextLabel") and c.Text:find("GOD'S PLAN", 1, true) then
+            c.Text = c.Text:gsub("👑%s*", "")
+            c.Size = UDim2.fromOffset(200, 30)
+            c.Position = UDim2.fromOffset(26, 0)
+            c.BackgroundTransparency = 1
+            c.Font = Enum.Font.GothamBold
+            c.TextSize = 13
+            c.TextColor3 = Color3.fromRGB(255, 255, 255)
+            c.TextXAlignment = Enum.TextXAlignment.Left
+            c.TextYAlignment = Enum.TextYAlignment.Center
+            c.ZIndex = header.ZIndex + 2
+        elseif c:IsA("TextLabel") then
+            local txt = c.Text or ""
+            if txt:find("FPS") then
+                c.Size = UDim2.fromOffset(60, 30)
+                c.Position = UDim2.new(1, -140, 0, 0)
+                c.TextColor3 = Color3.fromRGB(34, 197, 94)
+                c.TextSize = 12
+                c.Font = Enum.Font.GothamBold
+                c.TextXAlignment = Enum.TextXAlignment.Right
+                c.TextYAlignment = Enum.TextYAlignment.Center
+            elseif txt:find("ms") then
+                c.Size = UDim2.fromOffset(60, 30)
+                c.Position = UDim2.new(1, -80, 0, 0)
+                c.TextColor3 = Color3.fromRGB(209, 213, 219)
+                c.TextSize = 11
+                c.Font = Enum.Font.GothamMedium
+                c.TextXAlignment = Enum.TextXAlignment.Right
+                c.TextYAlignment = Enum.TextYAlignment.Center
+            elseif txt:match("^%d?%d:%d%d$") then
+                c.Size = UDim2.fromOffset(50, 30)
+                c.Position = UDim2.new(1, -200, 0, 0)
+                c.TextColor3 = Color3.fromRGB(156, 163, 175)
+                c.TextSize = 11
+                c.Font = Enum.Font.GothamMedium
+                c.TextXAlignment = Enum.TextXAlignment.Right
+                c.TextYAlignment = Enum.TextYAlignment.Center
+            end
+        elseif c:IsA("TextButton") and (c.Text == "✕" or c.Text == "X" or c.Text == "x") then
+            c.Size = UDim2.fromOffset(22, 22)
+            c.Position = UDim2.new(1, -24, 0.5, -11)
+            c.BackgroundColor3 = Color3.fromRGB(220, 38, 38)
+            c.BackgroundTransparency = 0
+            c.Text = "✕"
+            c.TextColor3 = Color3.fromRGB(255, 255, 255)
+            c.Font = Enum.Font.GothamBold
+            c.TextSize = 12
+            c.AutoButtonColor = false
+            c.TextXAlignment = Enum.TextXAlignment.Center
+            c.TextYAlignment = Enum.TextYAlignment.Center
+            c.ZIndex = header.ZIndex + 3
+            local cc = c:FindFirstChildOfClass("UICorner")
+            if not cc then cc = Instance.new("UICorner") cc.Parent = c end
+            cc.CornerRadius = UDim.new(0, 4)
+            local cs = c:FindFirstChildOfClass("UIStroke")
+            if cs then cs:Destroy() end
+            c.MouseEnter:Connect(function()
+                TweenService:Create(c, TweenInfo.new(0.15), {
+                    BackgroundColor3 = Color3.fromRGB(239, 68, 68)
+                }):Play()
+            end)
+            c.MouseLeave:Connect(function()
+                TweenService:Create(c, TweenInfo.new(0.15), {
+                    BackgroundColor3 = Color3.fromRGB(220, 38, 38)
+                }):Play()
+            end)
+        end
+    end
+
+    if not header:FindFirstChild("__Crown") then
+        local crown = Instance.new("TextLabel")
+        crown.Name = "__Crown"
+        crown.Size = UDim2.fromOffset(16, 16)
+        crown.Position = UDim2.fromOffset(8, 7)
+        crown.BackgroundTransparency = 1
+        crown.Text = "👑"
+        crown.Font = Enum.Font.GothamBold
+        crown.TextSize = 14
+        crown.TextColor3 = Color3.fromRGB(250, 204, 21)
+        crown.TextXAlignment = Enum.TextXAlignment.Center
+        crown.TextYAlignment = Enum.TextYAlignment.Center
+        crown.ZIndex = header.ZIndex + 2
+        crown.Parent = header
+    end
+end)
+
+
+-- ────────────────────────────────────────────────────────────────
+-- [4] ABA THEMES
+-- ────────────────────────────────────────────────────────────────
 do
     local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
+    local LP = Players.LocalPlayer
     local TweenService = game:GetService("TweenService")
-
     task.spawn(function()
-        task.wait(0.4)
-
+        task.wait(0.55)
         local gui = (_G.__L1GHT_UI and _G.__L1GHT_UI.gui)
-                 or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
+                 or LP.PlayerGui:FindFirstChild("L1GHTHub")
         if not gui then return end
         local window = gui:FindFirstChild("Window")
         if not window then return end
         local sidebar = window:FindFirstChild("Sidebar")
         local content = window:FindFirstChild("Content")
         if not sidebar or not content then return end
-
         if content:FindFirstChild("__ThemesPage") then return end
 
         local UIRef = _G.__L1GHT_UI
-        local ThemeRef = UIRef and UIRef.Theme or {
-            Card = Color3.fromRGB(14,14,22),
-            CardHover = Color3.fromRGB(20,20,30),
-            Accent = Color3.fromRGB(120,130,155),
-            AccentDim = Color3.fromRGB(60,65,85),
-            Text = Color3.fromRGB(240,240,250),
-            TextSecondary = Color3.fromRGB(160,160,175),
-            TextMuted = Color3.fromRGB(110,110,125),
-            Border = Color3.fromRGB(30,30,42),
+        local T = (UIRef and UIRef.Theme) or {
+            Card = Color3.fromRGB(14,14,22), CardHover = Color3.fromRGB(20,20,30),
+            Accent = Color3.fromRGB(120,130,155), AccentDim = Color3.fromRGB(60,65,85),
+            Text = Color3.fromRGB(240,240,250), TextSecondary = Color3.fromRGB(160,160,175),
+            TextMuted = Color3.fromRGB(110,110,125), Border = Color3.fromRGB(30,30,42),
             SurfaceSecondary = Color3.fromRGB(18,18,26),
         }
 
         local btn = Instance.new("TextButton")
         btn.Name = "__ThemesBtn"
         btn.Size = UDim2.new(1, 0, 0, 28)
-        btn.BackgroundColor3 = ThemeRef.Card
+        btn.BackgroundColor3 = T.Card
         btn.BackgroundTransparency = 0.6
         btn.BorderSizePixel = 0
         btn.Text = ""
         btn.AutoButtonColor = false
         btn.ZIndex = 21
         btn.Parent = sidebar
-        local bCorner = Instance.new("UICorner")
-        bCorner.CornerRadius = UDim.new(0, 6)
-        bCorner.Parent = btn
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.fromOffset(2, 12)
-        indicator.Position = UDim2.new(0, 4, 0.5, -6)
-        indicator.BackgroundColor3 = ThemeRef.Accent
-        indicator.BorderSizePixel = 0
-        indicator.Visible = false
-        indicator.Name = "Indicator"
-        indicator.ZIndex = 22
-        indicator.Parent = btn
-        local iCorner = Instance.new("UICorner")
-        iCorner.CornerRadius = UDim.new(1, 0)
-        iCorner.Parent = indicator
+        local ind = Instance.new("Frame")
+        ind.Size = UDim2.fromOffset(2, 12)
+        ind.Position = UDim2.new(0, 4, 0.5, -6)
+        ind.BackgroundColor3 = T.Accent
+        ind.BorderSizePixel = 0
+        ind.Visible = false
+        ind.Name = "Indicator"
+        ind.ZIndex = 22
+        ind.Parent = btn
+        Instance.new("UICorner", ind).CornerRadius = UDim.new(1, 0)
 
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -18, 1, 0)
-        label.Position = UDim2.fromOffset(14, 0)
-        label.BackgroundTransparency = 1
-        label.Text = "🎨 THEMES"
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 10
-        label.TextColor3 = ThemeRef.TextSecondary
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.ZIndex = 22
-        label.Parent = btn
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -18, 1, 0)
+        lbl.Position = UDim2.fromOffset(14, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = "🎨 THEMES"
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 10
+        lbl.TextColor3 = T.TextSecondary
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.ZIndex = 22
+        lbl.Parent = btn
 
         local page = Instance.new("ScrollingFrame")
         page.Name = "__ThemesPage"
@@ -3567,7 +3665,7 @@ do
         page.BackgroundTransparency = 1
         page.BorderSizePixel = 0
         page.ScrollBarThickness = 2
-        page.ScrollBarImageColor3 = ThemeRef.Border
+        page.ScrollBarImageColor3 = T.Border
         page.ScrollingDirection = Enum.ScrollingDirection.Y
         page.AutomaticCanvasSize = Enum.AutomaticSize.Y
         page.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -3575,26 +3673,25 @@ do
         page.ZIndex = 21
         page.Parent = content
 
-        local pLayout = Instance.new("UIListLayout")
-        pLayout.Padding = UDim.new(0, 6)
-        pLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        pLayout.Parent = page
-
-        local pPad = Instance.new("UIPadding")
-        pPad.PaddingTop = UDim.new(0, 8)
-        pPad.PaddingBottom = UDim.new(0, 8)
-        pPad.PaddingLeft = UDim.new(0, 10)
-        pPad.PaddingRight = UDim.new(0, 10)
-        pPad.Parent = page
+        local lay = Instance.new("UIListLayout")
+        lay.Padding = UDim.new(0, 6)
+        lay.SortOrder = Enum.SortOrder.LayoutOrder
+        lay.Parent = page
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 8)
+        pad.PaddingBottom = UDim.new(0, 8)
+        pad.PaddingLeft = UDim.new(0, 10)
+        pad.PaddingRight = UDim.new(0, 10)
+        pad.Parent = page
 
         local function hideWhenOtherShows()
             for _, c in ipairs(content:GetChildren()) do
                 if c ~= page and c:IsA("ScrollingFrame") and c.Visible then
                     page.Visible = false
-                    indicator.Visible = false
+                    ind.Visible = false
                     btn.BackgroundTransparency = 0.6
-                    btn.BackgroundColor3 = ThemeRef.Card
-                    label.TextColor3 = ThemeRef.TextSecondary
+                    btn.BackgroundColor3 = T.Card
+                    lbl.TextColor3 = T.TextSecondary
                     return
                 end
             end
@@ -3607,246 +3704,268 @@ do
 
         btn.MouseButton1Click:Connect(function()
             for _, c in ipairs(content:GetChildren()) do
-                if c:IsA("ScrollingFrame") and c ~= page then
-                    c.Visible = false
-                end
+                if c:IsA("ScrollingFrame") and c ~= page then c.Visible = false end
             end
             page.Visible = true
-            indicator.Visible = true
+            ind.Visible = true
             btn.BackgroundTransparency = 0.3
-            btn.BackgroundColor3 = ThemeRef.AccentDim
-            label.TextColor3 = ThemeRef.Text
+            btn.BackgroundColor3 = T.AccentDim
+            lbl.TextColor3 = T.Text
         end)
         btn.MouseEnter:Connect(function()
             if page.Visible then return end
-            TweenService:Create(btn, TweenInfo.new(0.12), {
-                BackgroundTransparency = 0.4, BackgroundColor3 = ThemeRef.CardHover,
-            }):Play()
+            TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundTransparency = 0.4, BackgroundColor3 = T.CardHover}):Play()
         end)
         btn.MouseLeave:Connect(function()
             if page.Visible then return end
-            TweenService:Create(btn, TweenInfo.new(0.12), {
-                BackgroundTransparency = 0.6, BackgroundColor3 = ThemeRef.Card,
-            }):Play()
+            TweenService:Create(btn, TweenInfo.new(0.12), {BackgroundTransparency = 0.6, BackgroundColor3 = T.Card}):Play()
         end)
 
-        local function mkSection(text)
-            local f = Instance.new("Frame")
-            f.Size = UDim2.new(1, 0, 0, 22)
-            f.BackgroundTransparency = 1
-            f.ZIndex = 22
-            f.Parent = page
-            local line = Instance.new("Frame")
-            line.Size = UDim2.fromOffset(2, 16)
-            line.Position = UDim2.fromOffset(0, 3)
-            line.BackgroundColor3 = ThemeRef.Accent
-            line.BorderSizePixel = 0
-            line.ZIndex = 23
-            line.Parent = f
-            local c = Instance.new("UICorner")
-            c.CornerRadius = UDim.new(1, 0)
-            c.Parent = line
-            local l = Instance.new("TextLabel")
-            l.Size = UDim2.new(1, -12, 1, 0)
-            l.Position = UDim2.fromOffset(10, 0)
-            l.BackgroundTransparency = 1
-            l.Text = text
-            l.Font = Enum.Font.GothamBold
-            l.TextSize = 11
-            l.TextColor3 = ThemeRef.Accent
-            l.TextXAlignment = Enum.TextXAlignment.Left
-            l.ZIndex = 23
-            l.Parent = f
-        end
+        local sec = Instance.new("Frame")
+        sec.Size = UDim2.new(1, 0, 0, 22)
+        sec.BackgroundTransparency = 1
+        sec.ZIndex = 22
+        sec.Parent = page
+        local line = Instance.new("Frame")
+        line.Size = UDim2.fromOffset(2, 16)
+        line.Position = UDim2.fromOffset(0, 3)
+        line.BackgroundColor3 = T.Accent
+        line.BorderSizePixel = 0
+        line.ZIndex = 23
+        line.Parent = sec
+        Instance.new("UICorner", line).CornerRadius = UDim.new(1, 0)
+        local sl = Instance.new("TextLabel")
+        sl.Size = UDim2.new(1, -12, 1, 0)
+        sl.Position = UDim2.fromOffset(10, 0)
+        sl.BackgroundTransparency = 1
+        sl.Text = "SELEÇÃO DE TEMA"
+        sl.Font = Enum.Font.GothamBold
+        sl.TextSize = 11
+        sl.TextColor3 = T.Accent
+        sl.TextXAlignment = Enum.TextXAlignment.Left
+        sl.ZIndex = 23
+        sl.Parent = sec
 
-        local function mkButton(text, cb)
-            local b = Instance.new("TextButton")
-            b.Size = UDim2.new(1, 0, 0, 30)
-            b.BackgroundColor3 = ThemeRef.AccentDim
-            b.BorderSizePixel = 0
-            b.Text = text
-            b.TextColor3 = ThemeRef.Text
-            b.Font = Enum.Font.GothamBold
-            b.TextSize = 11
-            b.AutoButtonColor = false
-            b.ZIndex = 22
-            b.Parent = page
-            local bc = Instance.new("UICorner")
-            bc.CornerRadius = UDim.new(0, 6)
-            bc.Parent = b
-            local bs = Instance.new("UIStroke")
-            bs.Color = ThemeRef.Border
-            bs.Thickness = 1
-            bs.Parent = b
-            b.MouseButton1Click:Connect(function() pcall(cb) end)
-            b.MouseEnter:Connect(function()
-                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.Accent}):Play()
-            end)
-            b.MouseLeave:Connect(function()
-                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.AccentDim}):Play()
-            end)
-        end
+        local f = Instance.new("Frame")
+        f.Size = UDim2.new(1, 0, 0, 34)
+        f.BackgroundColor3 = T.Card
+        f.BackgroundTransparency = 0.15
+        f.BorderSizePixel = 0
+        f.ZIndex = 22
+        f.Parent = page
+        Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
+        local fs = Instance.new("UIStroke")
+        fs.Color = T.Border
+        fs.Thickness = 1
+        fs.Parent = f
 
-        local function mkLabel(text)
-            local l = Instance.new("TextLabel")
-            l.Size = UDim2.new(1, 0, 0, 20)
-            l.BackgroundTransparency = 1
-            l.Text = text
-            l.Font = Enum.Font.GothamMedium
-            l.TextSize = 10
-            l.TextColor3 = ThemeRef.TextMuted
-            l.TextXAlignment = Enum.TextXAlignment.Left
-            l.ZIndex = 22
-            l.Parent = page
-        end
+        local values = {"Default", "Zero Two"}
+        local currentIdx = 1
+        local open = false
 
-        local function mkDropdown(text, values, defaultIdx, cb)
-            local f = Instance.new("Frame")
-            f.Size = UDim2.new(1, 0, 0, 34)
-            f.BackgroundColor3 = ThemeRef.Card
-            f.BackgroundTransparency = 0.15
-            f.BorderSizePixel = 0
-            f.ZIndex = 22
-            f.Parent = page
-            local fc = Instance.new("UICorner")
-            fc.CornerRadius = UDim.new(0, 6)
-            fc.Parent = f
-            local fs = Instance.new("UIStroke")
-            fs.Color = ThemeRef.Border
-            fs.Thickness = 1
-            fs.Parent = f
+        local b = Instance.new("TextButton")
+        b.Size = UDim2.new(1, -16, 1, -8)
+        b.Position = UDim2.fromOffset(8, 4)
+        b.BackgroundColor3 = T.SurfaceSecondary
+        b.BorderSizePixel = 0
+        b.Text = "Tema: " .. values[currentIdx]
+        b.TextColor3 = T.Text
+        b.Font = Enum.Font.GothamMedium
+        b.TextSize = 11
+        b.AutoButtonColor = false
+        b.TextXAlignment = Enum.TextXAlignment.Left
+        b.ZIndex = 23
+        b.Parent = f
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
 
-            local currentIdx = defaultIdx or 1
-            local open = false
+        local list = Instance.new("ScrollingFrame")
+        list.Size = UDim2.new(1, 0, 0, 60)
+        list.Position = UDim2.new(0, 0, 1, 4)
+        list.BackgroundColor3 = T.SurfaceSecondary
+        list.BorderSizePixel = 0
+        list.Visible = false
+        list.ZIndex = 100
+        list.ClipsDescendants = true
+        list.ScrollBarThickness = 2
+        list.Parent = f
+        Instance.new("UICorner", list).CornerRadius = UDim.new(0, 6)
+        local lls = Instance.new("UIStroke")
+        lls.Color = T.Border
+        lls.Thickness = 1
+        lls.Parent = list
+        local ll = Instance.new("UIListLayout")
+        ll.Padding = UDim.new(0, 2)
+        ll.Parent = list
+        local lp = Instance.new("UIPadding")
+        lp.PaddingTop = UDim.new(0, 4)
+        lp.PaddingBottom = UDim.new(0, 4)
+        lp.PaddingLeft = UDim.new(0, 4)
+        lp.PaddingRight = UDim.new(0, 4)
+        lp.Parent = list
 
-            local b = Instance.new("TextButton")
-            b.Size = UDim2.new(1, -16, 1, -8)
-            b.Position = UDim2.fromOffset(8, 4)
-            b.BackgroundColor3 = ThemeRef.SurfaceSecondary
-            b.BorderSizePixel = 0
-            b.Text = text .. ": " .. tostring(values[currentIdx])
-            b.TextColor3 = ThemeRef.Text
-            b.Font = Enum.Font.GothamMedium
-            b.TextSize = 11
-            b.AutoButtonColor = false
-            b.TextXAlignment = Enum.TextXAlignment.Left
-            b.ZIndex = 23
-            b.Parent = f
-            local bc = Instance.new("UICorner")
-            bc.CornerRadius = UDim.new(0, 6)
-            bc.Parent = b
-
-            local list = Instance.new("ScrollingFrame")
-            list.Size = UDim2.new(1, 0, 0, math.min(150, #values * 26 + 8))
-            list.Position = UDim2.new(0, 0, 1, 4)
-            list.BackgroundColor3 = ThemeRef.SurfaceSecondary
-            list.BorderSizePixel = 0
-            list.Visible = false
-            list.ZIndex = 100
-            list.ClipsDescendants = true
-            list.ScrollBarThickness = 2
-            list.Parent = f
-            local lc = Instance.new("UICorner")
-            lc.CornerRadius = UDim.new(0, 6)
-            lc.Parent = list
-            local ls = Instance.new("UIStroke")
-            ls.Color = ThemeRef.Border
-            ls.Thickness = 1
-            ls.Parent = list
-
-            local lList = Instance.new("UIListLayout")
-            lList.Padding = UDim.new(0, 2)
-            lList.Parent = list
-            local lPad = Instance.new("UIPadding")
-            lPad.PaddingTop = UDim.new(0, 4)
-            lPad.PaddingBottom = UDim.new(0, 4)
-            lPad.PaddingLeft = UDim.new(0, 4)
-            lPad.PaddingRight = UDim.new(0, 4)
-            lPad.Parent = list
-
-            local function rebuild()
-                for _, c in ipairs(list:GetChildren()) do
-                    if c:IsA("TextButton") then c:Destroy() end
-                end
-                for i, v in ipairs(values) do
-                    local item = Instance.new("TextButton")
-                    item.Size = UDim2.new(1, 0, 0, 22)
-                    item.BackgroundColor3 = (i == currentIdx) and ThemeRef.AccentDim or ThemeRef.Card
-                    item.BorderSizePixel = 0
-                    item.Text = "  " .. tostring(v)
-                    item.TextColor3 = (i == currentIdx) and ThemeRef.Text or ThemeRef.TextSecondary
-                    item.Font = Enum.Font.GothamMedium
-                    item.TextSize = 11
-                    item.TextXAlignment = Enum.TextXAlignment.Left
-                    item.AutoButtonColor = false
-                    item.ZIndex = 101
-                    item.LayoutOrder = i
-                    item.Parent = list
-                    local ic = Instance.new("UICorner")
-                    ic.CornerRadius = UDim.new(0, 6)
-                    ic.Parent = item
-
-                    item.MouseButton1Click:Connect(function()
-                        currentIdx = i
-                        b.Text = text .. ": " .. tostring(values[i])
-                        open = false
-                        list.Visible = false
-                        pcall(cb, values[i])
-                    end)
-                    item.MouseEnter:Connect(function() item.BackgroundColor3 = ThemeRef.CardHover end)
-                    item.MouseLeave:Connect(function()
-                        item.BackgroundColor3 = (i == currentIdx) and ThemeRef.AccentDim or ThemeRef.Card
-                    end)
-                end
-                list.CanvasSize = UDim2.new(0, 0, 0, #values * 24 + 8)
+        local function rebuild()
+            for _, c in ipairs(list:GetChildren()) do
+                if c:IsA("TextButton") then c:Destroy() end
             end
+            for i, v in ipairs(values) do
+                local item = Instance.new("TextButton")
+                item.Size = UDim2.new(1, 0, 0, 22)
+                item.BackgroundColor3 = (i == currentIdx) and T.AccentDim or T.Card
+                item.BorderSizePixel = 0
+                item.Text = "  " .. v
+                item.TextColor3 = (i == currentIdx) and T.Text or T.TextSecondary
+                item.Font = Enum.Font.GothamMedium
+                item.TextSize = 11
+                item.TextXAlignment = Enum.TextXAlignment.Left
+                item.AutoButtonColor = false
+                item.ZIndex = 101
+                item.LayoutOrder = i
+                item.Parent = list
+                Instance.new("UICorner", item).CornerRadius = UDim.new(0, 6)
 
-            b.MouseButton1Click:Connect(function()
-                open = not open
-                if open then rebuild() list.Visible = true
-                else list.Visible = false end
-            end)
+                item.MouseButton1Click:Connect(function()
+                    currentIdx = i
+                    b.Text = "Tema: " .. v
+                    open = false
+                    list.Visible = false
+                    local name = (v == "Zero Two") and "ZeroTwo" or v
+                    _G.ThemeManager:Apply(name)
+                end)
+                item.MouseEnter:Connect(function() item.BackgroundColor3 = T.CardHover end)
+                item.MouseLeave:Connect(function()
+                    item.BackgroundColor3 = (i == currentIdx) and T.AccentDim or T.Card
+                end)
+            end
+            list.CanvasSize = UDim2.new(0, 0, 0, #values * 24 + 8)
         end
 
-        mkSection("SELEÇÃO DE TEMA")
-        mkDropdown("Tema", {"Default", "Zero Two"}, 1, function(v)
-            local name = (v == "Zero Two") and "ZeroTwo" or v
-            _G.ThemeManager:Apply(name)
+        b.MouseButton1Click:Connect(function()
+            open = not open
+            if open then rebuild() list.Visible = true
+            else list.Visible = false end
         end)
-        mkButton("Reaplicar tema atual", function()
-            _G.ThemeManager:Apply(_G.ThemeManager.Current)
-        end)
-        mkLabel("Escolha um tema. As cores da UI mudam instantaneamente.")
 
-        print("[Themes Tab] carregada.")
+        local rb = Instance.new("TextButton")
+        rb.Size = UDim2.new(1, 0, 0, 30)
+        rb.BackgroundColor3 = T.AccentDim
+        rb.BorderSizePixel = 0
+        rb.Text = "Reaplicar tema atual"
+        rb.TextColor3 = T.Text
+        rb.Font = Enum.Font.GothamBold
+        rb.TextSize = 11
+        rb.AutoButtonColor = false
+        rb.ZIndex = 22
+        rb.Parent = page
+        Instance.new("UICorner", rb).CornerRadius = UDim.new(0, 6)
+        local rbs = Instance.new("UIStroke")
+        rbs.Color = T.Border
+        rbs.Thickness = 1
+        rbs.Parent = rb
+        rb.MouseButton1Click:Connect(function()
+            pcall(function() _G.ThemeManager:Apply(_G.ThemeManager.Current) end)
+        end)
+        rb.MouseEnter:Connect(function()
+            TweenService:Create(rb, TweenInfo.new(0.12), {BackgroundColor3 = T.Accent}):Play()
+        end)
+        rb.MouseLeave:Connect(function()
+            TweenService:Create(rb, TweenInfo.new(0.12), {BackgroundColor3 = T.AccentDim}):Play()
+        end)
+
+        local lb = Instance.new("TextLabel")
+        lb.Size = UDim2.new(1, 0, 0, 20)
+        lb.BackgroundTransparency = 1
+        lb.Text = "Escolha um tema. As cores da UI mudam instantaneamente."
+        lb.Font = Enum.Font.GothamMedium
+        lb.TextSize = 10
+        lb.TextColor3 = T.TextMuted
+        lb.TextXAlignment = Enum.TextXAlignment.Left
+        lb.ZIndex = 22
+        lb.Parent = page
     end)
 end
 
 
--- ================================================================
--- 4) ABA SKIN PREVIEW
--- ================================================================
+-- ────────────────────────────────────────────────────────────────
+-- [5] ABA SKIN PREVIEW (Viewport + Modelo real + Apply/Reset)
+-- ────────────────────────────────────────────────────────────────
 do
     local Players = game:GetService("Players")
-    local LocalPlayer = Players.LocalPlayer
+    local LP = Players.LocalPlayer
     local TweenService = game:GetService("TweenService")
+    local RunService = game:GetService("RunService")
 
     local SkinPreview = {
         loadedDescription = nil,
         originalDescription = nil,
         targetUserId = nil,
+        previewModel = nil,
+        rotationConn = nil,
         applied = false,
+        viewportRef = nil,
     }
 
-    local function notify(title, msg, icon)
+    local function notify(t, m, i)
         if _G.__L1GHT_UI and _G.__L1GHT_UI.Notifications then
-            _G.__L1GHT_UI.Notifications.Show(title, msg, icon or "💡", 2)
-        else
-            print("[" .. title .. "] " .. msg)
+            _G.__L1GHT_UI.Notifications.Show(t, m, i or "💡", 2)
+        else print("[" .. t .. "] " .. m) end
+    end
+
+    local function CleanupPreview()
+        if SkinPreview.rotationConn then
+            pcall(function() SkinPreview.rotationConn:Disconnect() end)
+            SkinPreview.rotationConn = nil
+        end
+        if SkinPreview.previewModel then
+            pcall(function() SkinPreview.previewModel:Destroy() end)
+            SkinPreview.previewModel = nil
         end
     end
 
-    function SkinPreview.Load(input)
+    local function CreatePreviewModel(desc, viewport)
+        if not desc or not viewport then return nil end
+
+        for _, c in ipairs(viewport:GetChildren()) do
+            if c:IsA("Model") then c:Destroy() end
+        end
+
+        local model
+        local ok = pcall(function()
+            model = Players:CreateHumanoidModelFromDescriptionAsync(
+                desc, Enum.HumanoidRigType.R15
+            )
+        end)
+        if not ok or not model then
+            local ok2 = pcall(function()
+                model = Players:CreateHumanoidModelFromDescriptionAsync(
+                    desc, Enum.HumanoidRigType.R6
+                )
+            end)
+            if not ok2 or not model then return nil end
+        end
+
+        model.Name = "PreviewModel"
+        for _, d in ipairs(model:GetDescendants()) do
+            if d:IsA("BasePart") then
+                d.Anchored = true
+                d.CanCollide = false
+            end
+        end
+        model.Parent = viewport
+
+        pcall(function()
+            model:PivotTo(CFrame.new(0, 0, 0))
+        end)
+
+        SkinPreview.rotationConn = RunService.RenderStepped:Connect(function(dt)
+            if not SkinPreview.previewModel or not SkinPreview.previewModel.Parent then return end
+            local pivot = SkinPreview.previewModel:GetPivot()
+            SkinPreview.previewModel:PivotTo(pivot * CFrame.Angles(0, math.rad(dt * 60), 0))
+        end)
+
+        return model
+    end
+
+    function SkinPreview.Load(input, viewport)
         if not input or input == "" then
             notify("Skin", "Digite nome ou UserId", "⚠️") return
         end
@@ -3862,22 +3981,41 @@ do
         if not userId then
             notify("Skin", "Jogador não encontrado", "❌") return
         end
+
         local ok, desc = pcall(function()
-            return Players:GetHumanoidDescriptionFromUserId(userId)
+            return Players:GetHumanoidDescriptionFromUserIdAsync(userId)
         end)
         if not ok or not desc then
-            notify("Skin", "Falha ao carregar skin", "❌") return
+            notify("Skin", "Falha ao carregar descrição", "❌") return
         end
+
+        local vp = viewport or SkinPreview.viewportRef
+        if not vp then
+            notify("Skin", "Viewport não disponível", "❌") return
+        end
+
+        CleanupPreview()
+
+        local model = CreatePreviewModel(desc, vp)
+        if not model then
+            notify("Skin", "Falha ao criar preview", "❌") return
+        end
+
         SkinPreview.loadedDescription = desc
+        SkinPreview.previewModel = model
         SkinPreview.targetUserId = userId
-        notify("Skin", "Carregado: " .. userId, "✅")
+
+        local ph = vp:FindFirstChild("__Placeholder")
+        if ph then ph.Visible = false end
+
+        notify("Skin", "Preview carregado: " .. userId, "✅")
     end
 
     function SkinPreview.Apply()
         if not SkinPreview.loadedDescription then
             notify("Skin", "Faça Load primeiro", "⚠️") return
         end
-        local char = LocalPlayer.Character
+        local char = LP.Character
         if not char then notify("Skin", "Personagem não existe", "❌") return end
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hum then notify("Skin", "Humanoid não existe", "❌") return end
@@ -3886,28 +4024,46 @@ do
             local ok, orig = pcall(function() return hum:GetAppliedDescription() end)
             if ok and orig then SkinPreview.originalDescription = orig end
         end
+
         local ok = pcall(function()
             hum:ApplyDescription(SkinPreview.loadedDescription)
         end)
-        if not ok then notify("Skin", "Falha ao aplicar", "❌") return end
+        if not ok then
+            notify("Skin", "Falha ao aplicar no personagem", "❌")
+            return
+        end
         SkinPreview.applied = true
-        notify("Skin", "Preview aplicado", "✅")
+        notify("Skin", "Aplicado no seu personagem", "✅")
     end
 
     function SkinPreview.Reset()
-        if not SkinPreview.originalDescription then
-            notify("Skin", "Nada para resetar", "⚠️") return
+        CleanupPreview()
+        if SkinPreview.applied and SkinPreview.originalDescription then
+            local char = LP.Character
+            if char then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    pcall(function()
+                        hum:ApplyDescription(SkinPreview.originalDescription)
+                    end)
+                end
+            end
+            SkinPreview.applied = false
         end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hum then return end
-        pcall(function() hum:ApplyDescription(SkinPreview.originalDescription) end)
-        SkinPreview.applied = false
+        SkinPreview.originalDescription = nil
+        SkinPreview.loadedDescription = nil
+        SkinPreview.targetUserId = nil
+
+        local vp = SkinPreview.viewportRef
+        if vp then
+            local ph = vp:FindFirstChild("__Placeholder")
+            if ph then ph.Visible = true end
+        end
+
         notify("Skin", "Resetado", "✅")
     end
 
-    LocalPlayer.CharacterAdded:Connect(function()
+    LP.CharacterAdded:Connect(function()
         SkinPreview.originalDescription = nil
         SkinPreview.applied = false
     end)
@@ -3915,10 +4071,9 @@ do
     _G.SkinPreview = SkinPreview
 
     task.spawn(function()
-        task.wait(0.5)
-
+        task.wait(0.6)
         local gui = (_G.__L1GHT_UI and _G.__L1GHT_UI.gui)
-                 or LocalPlayer.PlayerGui:FindFirstChild("L1GHTHub")
+                 or LP.PlayerGui:FindFirstChild("L1GHTHub")
         if not gui then return end
         local window = gui:FindFirstChild("Window")
         if not window then return end
@@ -3926,59 +4081,54 @@ do
         local content = window:FindFirstChild("Content")
         if not sidebar or not content then return end
 
-        if content:FindFirstChild("__SkinPage") then return end
+        local old = content:FindFirstChild("__SkinPage")
+        if old then old:Destroy() end
+        local oldBtn = sidebar:FindFirstChild("__SkinBtn")
+        if oldBtn then oldBtn:Destroy() end
 
         local UIRef = _G.__L1GHT_UI
-        local ThemeRef = UIRef and UIRef.Theme or {
-            Card = Color3.fromRGB(14,14,22),
-            CardHover = Color3.fromRGB(20,20,30),
-            Accent = Color3.fromRGB(120,130,155),
-            AccentDim = Color3.fromRGB(60,65,85),
-            Text = Color3.fromRGB(240,240,250),
-            TextSecondary = Color3.fromRGB(160,160,175),
-            TextMuted = Color3.fromRGB(110,110,125),
-            Border = Color3.fromRGB(30,30,42),
+        local T = (UIRef and UIRef.Theme) or {
+            Card = Color3.fromRGB(14,14,22), CardHover = Color3.fromRGB(20,20,30),
+            Accent = Color3.fromRGB(120,130,155), AccentDim = Color3.fromRGB(60,65,85),
+            Text = Color3.fromRGB(240,240,250), TextSecondary = Color3.fromRGB(160,160,175),
+            TextMuted = Color3.fromRGB(110,110,125), Border = Color3.fromRGB(30,30,42),
             SurfaceSecondary = Color3.fromRGB(18,18,26),
         }
 
         local btn = Instance.new("TextButton")
         btn.Name = "__SkinBtn"
         btn.Size = UDim2.new(1, 0, 0, 28)
-        btn.BackgroundColor3 = ThemeRef.Card
+        btn.BackgroundColor3 = T.Card
         btn.BackgroundTransparency = 0.6
         btn.BorderSizePixel = 0
         btn.Text = ""
         btn.AutoButtonColor = false
         btn.ZIndex = 21
         btn.Parent = sidebar
-        local bCorner = Instance.new("UICorner")
-        bCorner.CornerRadius = UDim.new(0, 6)
-        bCorner.Parent = btn
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
 
-        local indicator = Instance.new("Frame")
-        indicator.Size = UDim2.fromOffset(2, 12)
-        indicator.Position = UDim2.new(0, 4, 0.5, -6)
-        indicator.BackgroundColor3 = ThemeRef.Accent
-        indicator.BorderSizePixel = 0
-        indicator.Visible = false
-        indicator.Name = "Indicator"
-        indicator.ZIndex = 22
-        indicator.Parent = btn
-        local iCorner = Instance.new("UICorner")
-        iCorner.CornerRadius = UDim.new(1, 0)
-        iCorner.Parent = indicator
+        local ind = Instance.new("Frame")
+        ind.Size = UDim2.fromOffset(2, 12)
+        ind.Position = UDim2.new(0, 4, 0.5, -6)
+        ind.BackgroundColor3 = T.Accent
+        ind.BorderSizePixel = 0
+        ind.Visible = false
+        ind.Name = "Indicator"
+        ind.ZIndex = 22
+        ind.Parent = btn
+        Instance.new("UICorner", ind).CornerRadius = UDim.new(1, 0)
 
-        local label = Instance.new("TextLabel")
-        label.Size = UDim2.new(1, -18, 1, 0)
-        label.Position = UDim2.fromOffset(14, 0)
-        label.BackgroundTransparency = 1
-        label.Text = "🧍 SKIN"
-        label.Font = Enum.Font.GothamBold
-        label.TextSize = 10
-        label.TextColor3 = ThemeRef.TextSecondary
-        label.TextXAlignment = Enum.TextXAlignment.Left
-        label.ZIndex = 22
-        label.Parent = btn
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(1, -18, 1, 0)
+        lbl.Position = UDim2.fromOffset(14, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = "🧍 SKIN"
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextSize = 10
+        lbl.TextColor3 = T.TextSecondary
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.ZIndex = 22
+        lbl.Parent = btn
 
         local page = Instance.new("ScrollingFrame")
         page.Name = "__SkinPage"
@@ -3986,7 +4136,7 @@ do
         page.BackgroundTransparency = 1
         page.BorderSizePixel = 0
         page.ScrollBarThickness = 2
-        page.ScrollBarImageColor3 = ThemeRef.Border
+        page.ScrollBarImageColor3 = T.Border
         page.ScrollingDirection = Enum.ScrollingDirection.Y
         page.AutomaticCanvasSize = Enum.AutomaticSize.Y
         page.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -3994,26 +4144,25 @@ do
         page.ZIndex = 21
         page.Parent = content
 
-        local pLayout = Instance.new("UIListLayout")
-        pLayout.Padding = UDim.new(0, 6)
-        pLayout.SortOrder = Enum.SortOrder.LayoutOrder
-        pLayout.Parent = page
-
-        local pPad = Instance.new("UIPadding")
-        pPad.PaddingTop = UDim.new(0, 8)
-        pPad.PaddingBottom = UDim.new(0, 8)
-        pPad.PaddingLeft = UDim.new(0, 10)
-        pPad.PaddingRight = UDim.new(0, 10)
-        pPad.Parent = page
+        local lay = Instance.new("UIListLayout")
+        lay.Padding = UDim.new(0, 6)
+        lay.SortOrder = Enum.SortOrder.LayoutOrder
+        lay.Parent = page
+        local pad = Instance.new("UIPadding")
+        pad.PaddingTop = UDim.new(0, 8)
+        pad.PaddingBottom = UDim.new(0, 8)
+        pad.PaddingLeft = UDim.new(0, 10)
+        pad.PaddingRight = UDim.new(0, 10)
+        pad.Parent = page
 
         local function hideWhenOtherShows()
             for _, c in ipairs(content:GetChildren()) do
                 if c ~= page and c:IsA("ScrollingFrame") and c.Visible then
                     page.Visible = false
-                    indicator.Visible = false
+                    ind.Visible = false
                     btn.BackgroundTransparency = 0.6
-                    btn.BackgroundColor3 = ThemeRef.Card
-                    label.TextColor3 = ThemeRef.TextSecondary
+                    btn.BackgroundColor3 = T.Card
+                    lbl.TextColor3 = T.TextSecondary
                     return
                 end
             end
@@ -4026,143 +4175,173 @@ do
 
         btn.MouseButton1Click:Connect(function()
             for _, c in ipairs(content:GetChildren()) do
-                if c:IsA("ScrollingFrame") and c ~= page then
-                    c.Visible = false
-                end
+                if c:IsA("ScrollingFrame") and c ~= page then c.Visible = false end
             end
             page.Visible = true
-            indicator.Visible = true
+            ind.Visible = true
             btn.BackgroundTransparency = 0.3
-            btn.BackgroundColor3 = ThemeRef.AccentDim
-            label.TextColor3 = ThemeRef.Text
+            btn.BackgroundColor3 = T.AccentDim
+            lbl.TextColor3 = T.Text
         end)
         btn.MouseEnter:Connect(function()
             if page.Visible then return end
             TweenService:Create(btn, TweenInfo.new(0.12), {
-                BackgroundTransparency = 0.4, BackgroundColor3 = ThemeRef.CardHover,
+                BackgroundTransparency = 0.4, BackgroundColor3 = T.CardHover
             }):Play()
         end)
         btn.MouseLeave:Connect(function()
             if page.Visible then return end
             TweenService:Create(btn, TweenInfo.new(0.12), {
-                BackgroundTransparency = 0.6, BackgroundColor3 = ThemeRef.Card,
+                BackgroundTransparency = 0.6, BackgroundColor3 = T.Card
             }):Play()
         end)
 
-        local function mkSection(text)
-            local f = Instance.new("Frame")
-            f.Size = UDim2.new(1, 0, 0, 22)
-            f.BackgroundTransparency = 1
-            f.ZIndex = 22
-            f.Parent = page
-            local line = Instance.new("Frame")
-            line.Size = UDim2.fromOffset(2, 16)
-            line.Position = UDim2.fromOffset(0, 3)
-            line.BackgroundColor3 = ThemeRef.Accent
-            line.BorderSizePixel = 0
-            line.ZIndex = 23
-            line.Parent = f
-            local c = Instance.new("UICorner")
-            c.CornerRadius = UDim.new(1, 0)
-            c.Parent = line
-            local l = Instance.new("TextLabel")
-            l.Size = UDim2.new(1, -12, 1, 0)
-            l.Position = UDim2.fromOffset(10, 0)
-            l.BackgroundTransparency = 1
-            l.Text = text
-            l.Font = Enum.Font.GothamBold
-            l.TextSize = 11
-            l.TextColor3 = ThemeRef.Accent
-            l.TextXAlignment = Enum.TextXAlignment.Left
-            l.ZIndex = 23
-            l.Parent = f
-        end
+        local sec = Instance.new("Frame")
+        sec.Size = UDim2.new(1, 0, 0, 22)
+        sec.BackgroundTransparency = 1
+        sec.ZIndex = 22
+        sec.Parent = page
+        local line = Instance.new("Frame")
+        line.Size = UDim2.fromOffset(2, 16)
+        line.Position = UDim2.fromOffset(0, 3)
+        line.BackgroundColor3 = T.Accent
+        line.BorderSizePixel = 0
+        line.ZIndex = 23
+        line.Parent = sec
+        Instance.new("UICorner", line).CornerRadius = UDim.new(1, 0)
+        local sl = Instance.new("TextLabel")
+        sl.Size = UDim2.new(1, -12, 1, 0)
+        sl.Position = UDim2.fromOffset(10, 0)
+        sl.BackgroundTransparency = 1
+        sl.Text = "SKIN PREVIEW"
+        sl.Font = Enum.Font.GothamBold
+        sl.TextSize = 11
+        sl.TextColor3 = T.Accent
+        sl.TextXAlignment = Enum.TextXAlignment.Left
+        sl.ZIndex = 23
+        sl.Parent = sec
 
-        local function mkInput(placeholder)
-            local f = Instance.new("Frame")
-            f.Size = UDim2.new(1, 0, 0, 34)
-            f.BackgroundColor3 = ThemeRef.Card
-            f.BackgroundTransparency = 0.15
-            f.BorderSizePixel = 0
-            f.ZIndex = 22
-            f.Parent = page
-            local fc = Instance.new("UICorner")
-            fc.CornerRadius = UDim.new(0, 6)
-            fc.Parent = f
-            local fs = Instance.new("UIStroke")
-            fs.Color = ThemeRef.Border
-            fs.Thickness = 1
-            fs.Parent = f
-            local box = Instance.new("TextBox")
-            box.Size = UDim2.new(1, -16, 1, -8)
-            box.Position = UDim2.fromOffset(8, 4)
-            box.BackgroundColor3 = ThemeRef.SurfaceSecondary
-            box.BorderSizePixel = 0
-            box.Text = ""
-            box.PlaceholderText = placeholder or "..."
-            box.TextColor3 = ThemeRef.Text
-            box.PlaceholderColor3 = ThemeRef.TextMuted
-            box.Font = Enum.Font.GothamMedium
-            box.TextSize = 11
-            box.ClearTextOnFocus = false
-            box.ZIndex = 23
-            box.Parent = f
-            local bc = Instance.new("UICorner")
-            bc.CornerRadius = UDim.new(0, 6)
-            bc.Parent = box
-            return box
-        end
+        local vpFrame = Instance.new("Frame")
+        vpFrame.Size = UDim2.new(1, 0, 0, 240)
+        vpFrame.BackgroundColor3 = T.SurfaceSecondary
+        vpFrame.BackgroundTransparency = 0.2
+        vpFrame.BorderSizePixel = 0
+        vpFrame.ZIndex = 22
+        vpFrame.Parent = page
+        Instance.new("UICorner", vpFrame).CornerRadius = UDim.new(0, 6)
+        local vfs = Instance.new("UIStroke")
+        vfs.Color = T.Border
+        vfs.Thickness = 1
+        vfs.Parent = vpFrame
 
-        local function mkButton(text, cb)
+        local viewport = Instance.new("ViewportFrame")
+        viewport.Size = UDim2.new(1, -8, 1, -8)
+        viewport.Position = UDim2.fromOffset(4, 4)
+        viewport.BackgroundTransparency = 1
+        viewport.BorderSizePixel = 0
+        viewport.Ambient = Color3.fromRGB(220, 220, 220)
+        viewport.LightColor = Color3.fromRGB(255, 255, 255)
+        viewport.LightDirection = Vector3.new(-0.5, -1, -0.5)
+        viewport.ZIndex = 23
+        viewport.Parent = vpFrame
+
+        local cam = Instance.new("Camera")
+        cam.FieldOfView = 32
+        cam.CFrame = CFrame.new(Vector3.new(0, 2.2, 6.5), Vector3.new(0, 2.2, 0))
+        cam.Parent = viewport
+        viewport.CurrentCamera = cam
+
+        SkinPreview.viewportRef = viewport
+
+        local placeholder = Instance.new("TextLabel")
+        placeholder.Name = "__Placeholder"
+        placeholder.Size = UDim2.new(1, -20, 1, 0)
+        placeholder.Position = UDim2.fromOffset(10, 0)
+        placeholder.BackgroundTransparency = 1
+        placeholder.Text = "Digite um Player Name ou UserId e clique em Load"
+        placeholder.Font = Enum.Font.GothamMedium
+        placeholder.TextSize = 11
+        placeholder.TextColor3 = T.TextMuted
+        placeholder.TextWrapped = true
+        placeholder.TextXAlignment = Enum.TextXAlignment.Center
+        placeholder.TextYAlignment = Enum.TextYAlignment.Center
+        placeholder.ZIndex = 24
+        placeholder.Parent = viewport
+
+        local iframe = Instance.new("Frame")
+        iframe.Size = UDim2.new(1, 0, 0, 34)
+        iframe.BackgroundColor3 = T.Card
+        iframe.BackgroundTransparency = 0.15
+        iframe.BorderSizePixel = 0
+        iframe.ZIndex = 22
+        iframe.Parent = page
+        Instance.new("UICorner", iframe).CornerRadius = UDim.new(0, 6)
+        local ifs = Instance.new("UIStroke")
+        ifs.Color = T.Border
+        ifs.Thickness = 1
+        ifs.Parent = iframe
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(1, -16, 1, -8)
+        box.Position = UDim2.fromOffset(8, 4)
+        box.BackgroundColor3 = T.SurfaceSecondary
+        box.BorderSizePixel = 0
+        box.Text = ""
+        box.PlaceholderText = "Player Name ou UserId..."
+        box.TextColor3 = T.Text
+        box.PlaceholderColor3 = T.TextMuted
+        box.Font = Enum.Font.GothamMedium
+        box.TextSize = 11
+        box.ClearTextOnFocus = false
+        box.ZIndex = 23
+        box.Parent = iframe
+        Instance.new("UICorner", box).CornerRadius = UDim.new(0, 6)
+
+        local function mkBtn(txt, cb)
             local b = Instance.new("TextButton")
             b.Size = UDim2.new(1, 0, 0, 30)
-            b.BackgroundColor3 = ThemeRef.AccentDim
+            b.BackgroundColor3 = T.AccentDim
             b.BorderSizePixel = 0
-            b.Text = text
-            b.TextColor3 = ThemeRef.Text
+            b.Text = txt
+            b.TextColor3 = T.Text
             b.Font = Enum.Font.GothamBold
             b.TextSize = 11
             b.AutoButtonColor = false
             b.ZIndex = 22
             b.Parent = page
-            local bc = Instance.new("UICorner")
-            bc.CornerRadius = UDim.new(0, 6)
-            bc.Parent = b
+            Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
             local bs = Instance.new("UIStroke")
-            bs.Color = ThemeRef.Border
+            bs.Color = T.Border
             bs.Thickness = 1
             bs.Parent = b
             b.MouseButton1Click:Connect(function() pcall(cb) end)
             b.MouseEnter:Connect(function()
-                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.Accent}):Play()
+                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = T.Accent}):Play()
             end)
             b.MouseLeave:Connect(function()
-                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = ThemeRef.AccentDim}):Play()
+                TweenService:Create(b, TweenInfo.new(0.12), {BackgroundColor3 = T.AccentDim}):Play()
             end)
-            return b
         end
 
-        local function mkLabel(text)
-            local l = Instance.new("TextLabel")
-            l.Size = UDim2.new(1, 0, 0, 20)
-            l.BackgroundTransparency = 1
-            l.Text = text
-            l.Font = Enum.Font.GothamMedium
-            l.TextSize = 10
-            l.TextColor3 = ThemeRef.TextMuted
-            l.TextXAlignment = Enum.TextXAlignment.Left
-            l.ZIndex = 22
-            l.Parent = page
-        end
+        mkBtn("Load", function()
+            SkinPreview.Load(box.Text, viewport)
+        end)
+        mkBtn("Apply Preview", function()
+            SkinPreview.Apply()
+        end)
+        mkBtn("Reset", function()
+            SkinPreview.Reset()
+        end)
 
-        mkSection("SKIN PREVIEW")
-        local inputBox = mkInput("Player Name ou UserId...")
-        mkButton("Load", function() SkinPreview.Load(inputBox.Text) end)
-        mkButton("Apply Preview", function() SkinPreview.Apply() end)
-        mkButton("Reset", function() SkinPreview.Reset() end)
-        mkLabel("Carrega a skin de outro jogador no seu personagem.")
-        mkLabel("Reset restaura a aparência original.")
-
-        print("[Skin Tab] carregada.")
+        local lb = Instance.new("TextLabel")
+        lb.Size = UDim2.new(1, 0, 0, 20)
+        lb.BackgroundTransparency = 1
+        lb.Text = "Preview local. Apply aplica no seu personagem."
+        lb.Font = Enum.Font.GothamMedium
+        lb.TextSize = 10
+        lb.TextColor3 = T.TextMuted
+        lb.TextXAlignment = Enum.TextXAlignment.Left
+        lb.ZIndex = 22
+        lb.Parent = page
     end)
 end
