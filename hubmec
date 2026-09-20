@@ -565,110 +565,100 @@ end
 local function AGV2_stop() if AGV2.connection then AGV2.connection:Disconnect() AGV2.connection = nil end AGV2.enabled = false end
 
 -- ================================================================
--- SEÇÃO 11: NO KNOCKBACK / DASH PATCHER
+-- SEÇÃO 11: DASH ANTI KNOCKBACK (CORRIGIDO)
 -- ================================================================
-_G.DashPatcher = { Enabled = false, Hooked = false, Target = nil, Original = nil }
-local DP_lastToggle = 0; local DP_DEBOUNCE = 0.5
-local function DP_scanner(n)
-    if not getgc then return nil end
-    local ts = LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Combat"):WaitForChild("Dash")
-    for _, v in pairs(getgc(true)) do if typeof(v) == "function" and getfenv(v).script == ts and debug.getinfo(v).name == n then return v end end
-    return nil
+-- Em vez de reimplementar runAttack, hookamos apenas Combat.Action.Event.
+-- O runAttack original roda intacto. Só reescrevemos os ActionNumbers
+-- do pacote final (removendo knockback), preservando timing, hit,
+-- ForceDirection e todo o resto.
+-- ================================================================
+
+_G.DashPatcher = {
+    Enabled = false,
+    Hooked = false,
+    OriginalEvent = nil,
+    CombatActionModule = nil,
+}
+
+local function DP_GetCombatAction()
+    local ok, core = pcall(function()
+        return require(game:GetService("ReplicatedStorage"):WaitForChild("Core"))
+    end)
+    if not ok or not core then return nil end
+    local ok2, Action = pcall(function()
+        return core.Get("Combat", "Action")
+    end)
+    if not ok2 or not Action then return nil end
+    return Action
 end
-local pA = DP_scanner("punchAnimation"); local vfx = DP_scanner("vfx")
-function _G.DP_runAttack(a,b,c,d)
-    local u = require(Services.ReplicatedStorage:WaitForChild("Core"))
-    local cf = u.Services.Camera.CFrame; local t0 = os.clock(); local rid = tostring(t0)
-    local ang, mx, mn, el = 0,0,0,0
-    local b2,f2,b3,f3,v120; local v121,v122,v13,v12 = nil,nil,false,false
-    local function v135(p,a1,a2,a3,a4)
-        local r1 = u.Get("Combat","Ragdoll").GetRagdollFrame(p)
-        local c1 = u.Get("Character","FullCustomReplication").GetCFrame(a)
-        local c2 = u.Get("Character","FullCustomReplication").GetCFrame(p)
-        local ok = not a2
-        if not ok and c1 and c2 then ok = math.abs(a1+c1.Position.Y-c2.Position.Y) < a2 end
-        local ok2 = not a3; if ok2 then r1 = ok2 elseif r1 then r1 = r1.Velocity.Y < 0 end
-        local ok3 = not a4; if ok3 then c2 = ok3 elseif c1 and c2 then c2 = c2.Position.Y > c1.Position.Y end
-        v120 = ok and (not r1 and r1 or r1) or ok; return v120
-    end
-    local function v140(p,h)
-        local r = u.Get("Combat","Ragdoll").GetRagdollFrame(p)
-        local uv = u.Get("Combat","Ragdoll").UpVelocities[p]
-        return (r and r.Velocity.Y < 0 and uv and uv > 1 and h.CollisionGroup ~= "NoCharacterCollisions") or false
-    end
-    local function v148(sz,off,val)
-        if u.Library("Instance").Exists(b) then
-            local _,h1 = u.Get("Combat","Hit").Box(nil,a,{Size=sz,Offset=off,IgnoreJump=true,IgnoreRagdolls="Ground",IgnoreKnockback=true,NoBaseValidation=true,RequireInFront=true,BlockHitsThroughWalls=true,CustomValidation=val})
-            f2,b2 = _,h1
-            local _,h2 = u.Get("Combat","Hit").Box(nil,a,{Size=sz,Offset=off,IgnoreJump=true,IgnoreRagdolls="Ground",IgnoreKnockback=true,RequireInFront=true,BlockHitsThroughWalls=true,CustomValidation=val})
-            f3,b3 = _,h2; return #b2 > 0
-        end
-    end
-    local v149,v150,v151,v152 = f3,mn,mx,v122; local v154,v155 = v121,nil
-    local function v159(p,h) local v = not p:GetAttribute("Ragdoll") or v135(p,2,0.25,true) if v then v = h.CollisionGroup ~= "NoCharacterCollisions" end return v end
-    while true do
-        task.wait()
-        local ncf = u.Services.Camera.CFrame
-        local _,y1 = cf:ToOrientation(); local _,y2 = ncf:ToOrientation()
-        local d = math.deg(y1-y2)
-        if d > 180 then d = d - 360 elseif d < -180 then d = d + 360 end
-        ang = ang + d; mx = math.max(v151,ang); mn = math.min(v150,ang)
-        el = os.clock() - t0; local rem = c - el
-        if el > 0.2125 then v121 = v148(Vector3.new(1,1,1),CFrame.new(0,7.5,-0.5),v140) v155 = v121 or v148(Vector3.new(5,5,4.5),CFrame.new(0,0,-2),v159) v154 = v121 end
-        if v155 or d < el then
-            local v166 = rem > 0 or v152
-            local v167 = v155 or v148(Vector3.new(7.5,5,7),CFrame.new(0,0,-2.75),v159)
-            if v167 then u.Get("Character","Move").SetJumpOverride("DashPunch",0) task.delay(0.5,u.Get("Character","Move").SetJumpOverride,"DashPunch",nil) end
-            local function v188()
-                local rep = {
-                    Guarantees = v149,
-                    Replace = function(p)
-                        local kd = u.Get("Combat","Knockback").CharacterPresets[p] == "Uppercut" and 0.375 or 0.2625
-                        local r = pcall(function() return u.Get("Combat","Ragdoll").GetRagdoll(p) end) and u.Get("Combat","Ragdoll").GetRagdoll(p) or nil
-                        local kb = p and p.GetAttribute and pcall(function() return p:GetAttribute("Knockback") end) and p:GetAttribute("Knockback")
-                        if r then return {ActionNumbers={2,6},ForceDirection=nil} end
-                        if el < kd then if p and p.SetAttribute then pcall(function() p:SetAttribute("Knockback",false) end) end return {ActionNumbers={1,6},ForceDirection=nil} end
-                        return {ActionNumbers={kb and 5 or (v166 and 4 or (r and 2 or 1)),6},ForceDirection=nil}
-                    end,
-                    UseFromCFrame = v166 and b.CFrame * CFrame.new(0,0,-2) or nil
-                }
-                task.wait(0.15); v12 = true
-                local _,_,_,_,bl = u.Get("Combat","Action").Event(nil,a,"PunchDash",rid,rep,0); v12 = false
-            end
-            task.spawn(v188)
-            if rem > 0 then u.Services.Run.Heartbeat:Wait() task.wait(rem+0.025) end
-            if pA then task.spawn(pA,a,rid) end
-            return rem > 0, v167
-        end
-        v150,v151,cf = mn,mx,ncf
-    end
-end
+
 local function DP_Enable()
-    if tick() - DP_lastToggle < DP_DEBOUNCE then return end
-    DP_lastToggle = tick()
     if _G.DashPatcher.Hooked then return end
-    if not hookfunction or not getgc then return end
-    local ts = LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("Combat"):WaitForChild("Dash")
-    for _, v in pairs(getgc(true)) do
-        pcall(function()
-            if typeof(v) == "function" and getfenv(v).script == ts and debug.getinfo(v).name == "runAttack" then
-                _G.DashPatcher.Target = v
-                _G.DashPatcher.Original = hookfunction(v, _G.DP_runAttack)
-                _G.DashPatcher.Hooked = true
-                _G.DashPatcher.Enabled = true
-            end
-        end)
+
+    local Action = DP_GetCombatAction()
+    if not Action or type(Action.Event) ~= "function" then
+        warn("[DashPatcher] Combat.Action.Event não encontrado")
+        return
     end
+
+    _G.DashPatcher.CombatActionModule = Action
+    _G.DashPatcher.OriginalEvent = Action.Event
+
+    -- Wrapper que intercepta APENAS o parâmetro Replace do pacote PunchDash
+    Action.Event = function(self, ...)
+        local args = { ... }
+
+        -- Localiza o nome da ação ("PunchDash", etc.) e a tabela de parâmetros
+        local actionName = nil
+        local params = nil
+        for i = 1, #args do
+            local v = args[i]
+            if type(v) == "string" and actionName == nil then
+                actionName = v
+            end
+            if type(v) == "table" and type(v.Replace) == "function" then
+                params = v
+                break
+            end
+        end
+
+        -- Intercepta somente PunchDash (ataque do dash)
+        if actionName == "PunchDash" and params then
+            local originalReplace = params.Replace
+            params.Replace = function(target)
+                local result = originalReplace(target)
+                if type(result) == "table" and type(result.ActionNumbers) == "table" then
+                    -- Reescreve SÓ os ActionNumbers (remove knockback)
+                    -- Preserva ForceDirection, Guarantees, UseFromCFrame,
+                    -- e qualquer outro campo que o original tenha produzido
+                    result.ActionNumbers = { 1, 6 }
+                end
+                return result
+            end
+        end
+
+        -- Chama o Event original com os argumentos ORIGINAIS, preservados
+        return _G.DashPatcher.OriginalEvent(self, table.unpack(args))
+    end
+
+    _G.DashPatcher.Hooked = true
+    _G.DashPatcher.Enabled = true
+    print("[DashPatcher] Anti Knockback ON")
 end
+
 local function DP_Disable()
     if not _G.DashPatcher.Hooked then return end
-    pcall(function()
-        hookfunction(_G.DashPatcher.Target, _G.DashPatcher.Original)
-    end)
+
+    local Action = _G.DashPatcher.CombatActionModule
+    if Action and _G.DashPatcher.OriginalEvent then
+        Action.Event = _G.DashPatcher.OriginalEvent
+    end
+
     _G.DashPatcher.Hooked = false
     _G.DashPatcher.Enabled = false
-    _G.DashPatcher.Target = nil
-    _G.DashPatcher.Original = nil
+    _G.DashPatcher.OriginalEvent = nil
+    _G.DashPatcher.CombatActionModule = nil
+    print("[DashPatcher] Anti Knockback OFF")
 end
 
 -- ================================================================
